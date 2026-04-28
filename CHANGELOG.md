@@ -7,6 +7,74 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [2.0.3] — 2026-04-28
+
+Closes the parseConfig + parseAccount V12_19 routing gaps left in v2.0.2.
+
+v2.0.2 fixed parseEngine + buildLayoutV12_19 with probe-confirmed SBF
+values, but parseConfig still routed v12.19 layouts (accountSize=360) to
+the legacy pre-v12.17 fall-through code, which read fields at completely
+wrong offsets. v2.0.3 adds parseConfigV12_19 with V12_19 SBF MarketConfig
+offsets and routes accountSize=360 layouts to it.
+
+### Account SBF offsets probe (also captured this round)
+
+V12_19 SBF Account size = 360 bytes. Field offsets all probe-confirmed
+via `cargo build-sbf --features small` compile errors:
+
+- capital 0, kind 16, pnl 24, reserved_pnl 40, position_basis_q 56
+- adl_a_basis 72, adl_k_snap 88, f_snap 104, adl_epoch_snap 120
+- matcher_program 128, matcher_context 160, owner 192, fee_credits 224
+- sched_present 248, sched_remaining_q 256, sched_anchor_q 272
+- sched_start_slot 288, sched_horizon 296, sched_release_q 304
+- pending_present 320, pending_remaining_q 328, pending_horizon 344
+- pending_created_slot 352
+
+These match V12_17 SBF Account offsets exactly (Account struct definition
+is identical between v12.17 and v12.19). The 8-byte size diff (352 vs 360)
+is trailing alignment padding, not a new field. parseAccount works
+correctly for both versions without changes.
+
+### Added
+
+- `parseConfigV12_19` reads v12.19 MarketConfig at probe-confirmed
+  offsets. Major v12.17 vs v12.19 reorderings:
+  - `oracle_authority` renamed to `hyperp_authority` at +144 (same offset)
+  - `last_effective_price_e6` shifted from +200 to +192
+  - `oracle_price_cap_e2bps` shifted from +192 to +216
+  - `dex_pool` shifted from +400 to +368
+  - `max_pnl_cap` shifted from +432 to +400
+  - `oi_cap_multiplier_bps` shifted from +448 to +416
+  - new fields: `tvl_insurance_cap_mult` at +202, `hyperp_mark_e6` at +176
+  - `pending_admin` shifted from +480 to +448
+- parseConfig dispatches V12_19 layouts (accountSize=360) to
+  parseConfigV12_19 before the V12_17 / legacy fallthrough.
+
+### Gates
+
+- pnpm test 792 PASS / 31 SKIPPED.
+- pnpm lint clean.
+- pnpm build clean.
+
+### Status
+
+After v2.0.3: every v12.19 read path is probe-verified.
+
+- detectSlabLayout: returns V12_19 layout for v12.19 sizes (probe-verified)
+- parseHeader: reads via layout.headerLen=136 (probe-verified)
+- parseConfig: routes V12_19 → parseConfigV12_19 (this release)
+- parseEngine: routes V12_19 via accountSize=360, uses V12_19 offsets (v2.0.2)
+- parseAllAccounts: uses layout.accountsOff (computed dynamically per tier in v2.0.2)
+- parseAccount: V12_17 SBF offsets work for V12_19 (Account struct identical, this release confirms)
+
+### Deprecations
+
+v2.0.0, v2.0.1, v2.0.2 all have residual v12.19 read-path bugs. Deprecate
+all three in favor of v2.0.3. Transaction-building paths in all earlier
+versions remain byte-correct.
+
+---
+
 ## [2.0.2] — 2026-04-28
 
 V12_19 SBF layout fix using authoritative probe-verified values. v2.0.1's

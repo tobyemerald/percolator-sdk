@@ -2618,10 +2618,147 @@ function parseConfigV12_17(data: Uint8Array, configOff: number): MarketConfig {
   };
 }
 
+/**
+ * V12_19 MarketConfig parser. SBF layout (480 bytes total, u128 align=8).
+ * Probe-confirmed against /Users/khubair/percolator-prog (cargo build-sbf
+ * --features small) on 2026-04-28.
+ *
+ *   0   collateral_mint [32]
+ *   32  vault_pubkey [32]
+ *   64  index_feed_id [32]
+ *   96  max_staleness_secs u64
+ *   104 conf_filter_bps u16
+ *   106 vault_authority_bump u8
+ *   107 invert u8
+ *   108 unit_scale u32
+ *   112 funding_horizon_slots u64
+ *   120 funding_k_bps u64
+ *   128 funding_max_premium_bps i64
+ *   136 funding_max_e9_per_slot i64
+ *   144 hyperp_authority [32]                  ← was oracle_authority in v12.17, renamed
+ *   176 hyperp_mark_e6 u64                     ← v12.19 only
+ *   184 last_oracle_publish_time i64
+ *   192 last_effective_price_e6 u64            ← shifted from v12.17 (was at 200)
+ *   200 insurance_withdraw_max_bps u16
+ *   202 tvl_insurance_cap_mult u16             ← v12.19 only
+ *   204 _iw_padding [u8;4]
+ *   208 insurance_withdraw_cooldown_slots u64
+ *   216 oracle_price_cap_e2bps u64             ← shifted from v12.17 (was at 192)
+ *   224 min_oracle_price_cap_e2bps u64
+ *   232 last_hyperp_index_slot u64
+ *   240 last_mark_push_slot u128
+ *   256 last_insurance_withdraw_slot u64
+ *   264 _pad u64
+ *   272 mark_ewma_e6 u64
+ *   280 mark_ewma_last_slot u64
+ *   288 mark_ewma_halflife_slots u64
+ *   296 init_restart_slot u64
+ *   304 permissionless_resolve_stale_slots u64
+ *   312 last_good_oracle_slot u64
+ *   320 maintenance_fee_per_slot u128
+ *   336 fee_sweep_cursor_word u64
+ *   344 fee_sweep_cursor_bit u64
+ *   352 mark_min_fee u64
+ *   360 force_close_delay_slots u64
+ *   368 dex_pool [32]                          ← shifted from v12.17 (was at 400)
+ *   400 max_pnl_cap u64                        ← shifted from v12.17 (was at 432)
+ *   408 last_audit_pause_slot u64
+ *   416 oi_cap_multiplier_bps u64
+ *   424 dispute_window_slots u64
+ *   432 dispute_bond_amount u64
+ *   440 lp_collateral_enabled u8
+ *   441 _pad u8
+ *   442 lp_collateral_ltv_bps u16
+ *   444 _pad [u8;4]
+ *   448 pending_admin [32]
+ *   480 end
+ */
+function parseConfigV12_19(data: Uint8Array, configOff: number): MarketConfig {
+  const MIN_V12_19_BYTES = 480;
+  if (data.length < configOff + MIN_V12_19_BYTES) {
+    throw new Error(`Slab data too short for V12_19 config: ${data.length} < ${configOff + MIN_V12_19_BYTES}`);
+  }
+
+  const b = configOff;
+  const collateralMint = new PublicKey(data.subarray(b + 0, b + 32));
+  const vaultPubkey = new PublicKey(data.subarray(b + 32, b + 64));
+  const indexFeedId = new PublicKey(data.subarray(b + 64, b + 96));
+  const maxStalenessSlots = readU64LE(data, b + 96);
+  const confFilterBps = readU16LE(data, b + 104);
+  const vaultAuthorityBump = readU8(data, b + 106);
+  const invert = readU8(data, b + 107);
+  const unitScale = readU32LE(data, b + 108);
+  const fundingHorizonSlots = readU64LE(data, b + 112);
+  const fundingKBps = readU64LE(data, b + 120);
+  const fundingMaxPremiumBps = readI64LE(data, b + 128);
+  const fundingMaxBpsPerSlot = readI64LE(data, b + 136);
+  const oracleAuthority = new PublicKey(data.subarray(b + 144, b + 176));
+  const authorityPriceE6 = readU64LE(data, b + 176);
+  const authorityTimestamp = readI64LE(data, b + 184);
+  const lastEffectivePriceE6 = readU64LE(data, b + 192);
+  const oraclePriceCapE2bps = readU64LE(data, b + 216);
+
+  const dexPoolBytes = data.subarray(b + 368, b + 400);
+  const dexPool = dexPoolBytes.some(x => x !== 0) ? new PublicKey(dexPoolBytes) : null;
+
+  return {
+    collateralMint,
+    vaultPubkey,
+    indexFeedId,
+    maxStalenessSlots,
+    confFilterBps,
+    vaultAuthorityBump,
+    invert,
+    unitScale,
+    fundingHorizonSlots,
+    fundingKBps,
+    fundingInvScaleNotionalE6: 0n,
+    fundingMaxPremiumBps,
+    fundingMaxBpsPerSlot,
+    fundingPremiumWeightBps: 0n,
+    fundingSettlementIntervalSlots: 0n,
+    fundingPremiumDampeningE6: 0n,
+    fundingPremiumMaxBpsPerSlot: 0n,
+    threshFloor: 0n,
+    threshRiskBps: 0n,
+    threshUpdateIntervalSlots: 0n,
+    threshStepBps: 0n,
+    threshAlphaBps: 0n,
+    threshMin: 0n,
+    threshMax: 0n,
+    threshMinStep: 0n,
+    oracleAuthority,
+    authorityPriceE6,
+    authorityTimestamp,
+    oraclePriceCapE2bps,
+    lastEffectivePriceE6,
+    oiCapMultiplierBps: readU64LE(data, b + 416),
+    maxPnlCap: readU64LE(data, b + 400),
+    adaptiveFundingEnabled: false,
+    adaptiveScaleBps: 0,
+    adaptiveMaxFundingBps: 0n,
+    marketCreatedSlot: 0n,
+    oiRampSlots: 0n,
+    resolvedSlot: 0n,
+    insuranceIsolationBps: 0,
+    oraclePhase: 0,
+    cumulativeVolumeE6: 0n,
+    phase2DeltaSlots: 0,
+    dexPool,
+  };
+}
+
 export function parseConfig(data: Uint8Array, layoutHint?: SlabLayout | null): MarketConfig {
   const layout = layoutHint !== undefined ? layoutHint : detectSlabLayout(data.length, data);
   const configOff = layout ? layout.configOffset : V0_HEADER_LEN;
   const configLen = layout ? layout.configLen : V0_CONFIG_LEN;
+
+  // V12_19 MarketConfig (480 bytes, hyperp/dex_pool reordered vs v12.17).
+  // Detect by accountSize=360 (probe-confirmed v12.19 SBF Account size).
+  const isV12_19 = layout && layout.accountSize === V12_19_ACCOUNT_SIZE_SBF;
+  if (isV12_19) {
+    return parseConfigV12_19(data, configOff);
+  }
 
   // V12_17 MarketConfig has a completely different layout — no funding_inv_scale,
   // no thresh_* fields. Parse it via its own field-ordered reader. The legacy
