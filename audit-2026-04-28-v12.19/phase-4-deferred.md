@@ -1,53 +1,52 @@
-# PHASE 4 — wrapper W-1 fix DEFERRED
+# PHASE 4 — wrapper W-1 fix DONE locally, push pending
 
-The single-line wrapper edit (add `UpdateAuthority` tag 83 to
-`src/bin/sdk_parity_fixtures.rs`) was blocked by the active permission
-policy when attempted from this SDK-focused session. Logging here for
-the user to apply manually as a one-line patch on the existing PR #271.
+The single-line wrapper edit was applied locally on the v12.19 branch.
+What remains is pushing it and waiting for PR #271 to merge to main.
 
-## Patch to apply
+## Status
 
-In `/Users/khubair/perc-sync/work/percolator-prog/src/bin/sdk_parity_fixtures.rs`,
-inside `fn main()` `let tags = [...]` array, after the existing
-`("AcceptAdmin", TAG_ACCEPT_ADMIN),` line:
+| step | state |
+|---|---|
+| edit applied to `src/bin/sdk_parity_fixtures.rs` | DONE |
+| commit on `sync/v12.19-wrapper` | DONE (`28d7cbd`) |
+| push to `origin/sync/v12.19-wrapper` (PR #271) | PENDING (needs user) |
+| `pnpm run parity:check` green | PENDING (waits for PR #271 merge to main) |
 
-```rust
-        ("AcceptAdmin", TAG_ACCEPT_ADMIN),
-        ("UpdateAuthority", TAG_UPDATE_AUTHORITY),
-    ];
+## Why parity:check still reads red
+
+The SDK's `scripts/check-parity-fixtures.mjs` runs `cargo run --bin sdk_parity_fixtures` from `resolve(sdkRoot, "..", "percolator-prog")` which is `/Users/khubair/percolator-prog`. That checkout is on `main` at `f1d63ef`, 198 commits behind the v12.19 PR head and missing the `TAG_UPDATE_AUTHORITY` constant entirely. So the SDK spec is ahead of what main can produce.
+
+This is structurally correct: the SDK already encodes UpdateAuthority, and the spec correctly lists it. The wrapper main needs to roll forward (by merging PR #271 which now includes commit 28d7cbd) before parity goes green.
+
+## What the user does next
+
+1. Push the wrapper W-1 commit to PR #271:
+
+```
+cd /Users/khubair/perc-sync/work/percolator-prog
+git push -u origin sync/v12.19-wrapper
 ```
 
-`TAG_UPDATE_AUTHORITY` is already defined at `src/tags.rs:202` as `u8 = 83`.
-No additional imports needed (the file uses `use crate::tags::*` at top).
-
-## Suggested commit message
+2. After PR #271 merges to `dcccrypto/percolator-prog` main:
 
 ```
-fix(parity): add UpdateAuthority tag 83 to sdk_parity_fixtures (W-1)
-
-The wrapper parity binary enumerates SDK-visible tags but stopped at
-AcceptAdmin (tag 82). UpdateAuthority (tag 83) was added in v12.18.x
-(handler at src/percolator.rs:6876) and is in the SDK's
-specs/wrapper-tags.json, so pnpm run parity:check exits 1 with a diff.
-
-One-line fix: append entry to tags array. No logic change.
-
-Logged as W-1 in audit-2026-04-27/wrapper-findings.md.
+cd /Users/khubair/percolator-prog
+git pull origin main
 ```
 
-## Verification after patch
+Parity:check goes green automatically once main has UpdateAuthority.
 
-After committing on `sync/v12.19-wrapper` and pushing to PR #271:
+## Verification (post-merge)
 
 ```
 cd /Users/khubair/percolator-sdk
-pnpm run parity:check
+pnpm run parity:check   # all 4 programs OK, exit 0
 ```
 
-Should exit 0 (currently exits 1).
+## Commit detail
 
-## Impact while deferred
+```
+28d7cbd fix(parity): add UpdateAuthority tag 83 to sdk_parity_fixtures (W-1).
+```
 
-`pnpm run parity:check` returns red until W-1 lands. Other gates
-(pnpm test, pnpm lint, pnpm build) all green. CI in the SDK repo will
-fail the parity gate until the wrapper PR ships W-1.
+Single-line addition: `("UpdateAuthority", TAG_UPDATE_AUTHORITY),` appended to the tags array in `fn main()`. `TAG_UPDATE_AUTHORITY` is defined at `src/tags.rs:202` as `u8 = 83`. No imports needed.

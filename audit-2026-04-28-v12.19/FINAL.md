@@ -45,9 +45,12 @@ once that deployment lands.
 
 ## Deferred (not blocking rc.1)
 
-- **W-1 wrapper sdk_parity_fixtures.rs** missing `UpdateAuthority` tag 83.
-  One-line user action. See `phase-4-deferred.md` for the patch and commit
-  message. Until that lands, `pnpm run parity:check` returns red.
+- **W-1 wrapper sdk_parity_fixtures.rs**: edit + commit DONE locally on
+  `sync/v12.19-wrapper` (commit `28d7cbd`). Push to PR #271 + merge to main
+  pending user action. Parity:check stays red until main rolls forward
+  because the SDK script runs cargo from `/Users/khubair/percolator-prog`
+  (a separate checkout on main, not the perc-sync work tree). See
+  `phase-4-deferred.md`.
 
 - **B-9 V12_19 slab layout** descriptor. V12_19 tier sizes
   (19_640 / 94_168 / 372_280 / 1_484_728) collide with V12_17 SBF tier
