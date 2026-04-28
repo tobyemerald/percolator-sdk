@@ -673,15 +673,17 @@ console.log("\n✅ All slab tests passed!");
   assert(layoutSbf!.configLen === 528, `V12_19 configLen should be 528, got ${layoutSbf!.configLen}`);
   assert(layoutSbf!.accountSize === 352, `V12_19 SBF accountSize should be 352, got ${layoutSbf!.accountSize}`);
 
-  // Engine internal offsets unchanged from V12_17 SBF — they are relative to engineOff.
-  assert(layoutSbf!.engineLastCrankSlotOff === 328,
-    `V12_19 SBF lastCrankSlotOff should be 328, got ${layoutSbf!.engineLastCrankSlotOff}`);
-  assert(layoutSbf!.engineGcCursorOff === 384,
-    `V12_19 SBF gcCursorOff should be 384, got ${layoutSbf!.engineGcCursorOff}`);
-  assert(layoutSbf!.engineLongOiOff === 504,
-    `V12_19 SBF longOiOff should be 504, got ${layoutSbf!.engineLongOiOff}`);
-  assert(layoutSbf!.engineShortOiOff === 520,
-    `V12_19 SBF shortOiOff should be 520, got ${layoutSbf!.engineShortOiOff}`);
+  // V12_19 RiskEngine struct grew vs V12_17 — internal offsets shifted.
+  // last_crank_slot replaced by last_market_slot at +656, gc_cursor by rr_cursor at +616,
+  // oi_eff_long/short shifted -16 from V12_17 SBF (504/520) to (488/504) due to new fields.
+  assert(layoutSbf!.engineLastCrankSlotOff === 656,
+    `V12_19 SBF lastCrankSlotOff (= last_market_slot) should be 656, got ${layoutSbf!.engineLastCrankSlotOff}`);
+  assert(layoutSbf!.engineGcCursorOff === 616,
+    `V12_19 SBF gcCursorOff (= rr_cursor_position) should be 616, got ${layoutSbf!.engineGcCursorOff}`);
+  assert(layoutSbf!.engineLongOiOff === 488,
+    `V12_19 SBF longOiOff should be 488, got ${layoutSbf!.engineLongOiOff}`);
+  assert(layoutSbf!.engineShortOiOff === 504,
+    `V12_19 SBF shortOiOff should be 504, got ${layoutSbf!.engineShortOiOff}`);
 
   // Fields that don't exist in v12.17 / v12.19 stay -1.
   assert(layoutSbf!.engineFundingIndexOff === -1, `V12_19 fundingIndexOff must stay -1`);
@@ -708,19 +710,21 @@ console.log("\n✅ All slab tests passed!");
   console.log(`  ✓ V12_17 native small slab (${V12_17_NATIVE_SMALL_SIZE}, 256 accounts) offsets correct`);
 
   // parseEngine round-trip: write known values into a V12_19 SBF slab at
-  // the four offsets, assert parseEngine reads them back. engineBase shifts
-  // to 600 (V12_19) since 94168-byte slabs now resolve to V12_19 layout.
+  // V12_19-correct offsets, assert parseEngine reads them back. engineBase
+  // is 600 (V12_19); internal offsets are V12_19-specific (engine struct
+  // grew, fields renamed: last_market_slot at +656, rr_cursor at +616,
+  // oi_eff_long/short at +488/+504, c_tot at +328, pnl_pos_tot at +344).
   const buf = Buffer.alloc(V12_19_SBF_SMALL_SIZE);
   const engineBase = 600;
 
-  // last_crank_slot (u64) at engineBase + 328
-  buf.writeBigUInt64LE(123_456n, engineBase + 328);
-  // gc_cursor (u16) at engineBase + 384
-  buf.writeUInt16LE(77, engineBase + 384);
-  // oi_eff_long_q (u128, lower 8 bytes) at engineBase + 504
-  buf.writeBigUInt64LE(1_000_000n, engineBase + 504);
-  // oi_eff_short_q (u128, lower 8 bytes) at engineBase + 520
-  buf.writeBigUInt64LE(750_000n, engineBase + 520);
+  // last_market_slot (u64) at engineBase + 656 (replaces V12_17 last_crank_slot)
+  buf.writeBigUInt64LE(123_456n, engineBase + 656);
+  // rr_cursor_position (u64) at engineBase + 616 (replaces V12_17 gc_cursor)
+  buf.writeUInt16LE(77, engineBase + 616);
+  // oi_eff_long_q (u128, lower 8 bytes) at engineBase + 488
+  buf.writeBigUInt64LE(1_000_000n, engineBase + 488);
+  // oi_eff_short_q (u128, lower 8 bytes) at engineBase + 504
+  buf.writeBigUInt64LE(750_000n, engineBase + 504);
   // current_slot at engineBase + 216 (so parseEngine has something to read)
   buf.writeBigUInt64LE(500n, engineBase + 216);
   // market_mode at engineBase + 224

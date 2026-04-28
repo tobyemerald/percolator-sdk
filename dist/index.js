@@ -2310,6 +2310,21 @@ for (const n of V12_17_TIERS) {
 }
 var V12_19_CONFIG_LEN = 528;
 var V12_19_ENGINE_OFF_SBF = 600;
+var V12_19_SBF_ENGINE_CURRENT_SLOT_OFF = 216;
+var V12_19_SBF_ENGINE_MARKET_MODE_OFF = 224;
+var V12_19_SBF_ENGINE_RESOLVED_LIVE_PRICE_OFF = 320;
+var V12_19_SBF_ENGINE_C_TOT_OFF = 328;
+var V12_19_SBF_ENGINE_PNL_POS_TOT_OFF = 344;
+var V12_19_SBF_ENGINE_PNL_MATURED_POS_TOT_OFF = 360;
+var V12_19_SBF_ENGINE_OI_EFF_LONG_OFF = 488;
+var V12_19_SBF_ENGINE_OI_EFF_SHORT_OFF = 504;
+var V12_19_SBF_ENGINE_NEG_PNL_COUNT_OFF = 608;
+var V12_19_SBF_ENGINE_RR_CURSOR_OFF = 616;
+var V12_19_SBF_ENGINE_LAST_ORACLE_PRICE_OFF = 640;
+var V12_19_SBF_ENGINE_FUND_PX_LAST_OFF = 648;
+var V12_19_SBF_ENGINE_LAST_MARKET_SLOT_OFF = 656;
+var V12_19_SBF_ENGINE_F_LONG_NUM_OFF = 664;
+var V12_19_SBF_ENGINE_F_SHORT_NUM_OFF = 680;
 var V12_19_SIZES = /* @__PURE__ */ new Map([
   [19640, 64],
   // --features micro
@@ -2326,7 +2341,20 @@ function buildLayoutV12_19(maxAccounts, dataLen) {
     ...base,
     configLen: V12_19_CONFIG_LEN,
     engineOff: V12_19_ENGINE_OFF_SBF,
-    accountsOff: V12_19_ENGINE_OFF_SBF + (base.accountsOff - base.engineOff)
+    accountsOff: V12_19_ENGINE_OFF_SBF + (base.accountsOff - base.engineOff),
+    // V12_19 engine field offsets (only the fields exposed in SlabLayout).
+    // Other engine fields (negPnlCount, fundPxLast, fLongNum, fShortNum,
+    // lastOraclePrice, marketMode, pnlMaturedPosTot) are read by parseEngine
+    // via its own version-aware switch keyed on engineOff === 600.
+    engineCurrentSlotOff: V12_19_SBF_ENGINE_CURRENT_SLOT_OFF,
+    engineCTotOff: V12_19_SBF_ENGINE_C_TOT_OFF,
+    enginePnlPosTotOff: V12_19_SBF_ENGINE_PNL_POS_TOT_OFF,
+    engineLongOiOff: V12_19_SBF_ENGINE_OI_EFF_LONG_OFF,
+    engineShortOiOff: V12_19_SBF_ENGINE_OI_EFF_SHORT_OFF,
+    // V12_19 last_market_slot replaces V12_17 last_crank_slot semantics.
+    engineLastCrankSlotOff: V12_19_SBF_ENGINE_LAST_MARKET_SLOT_OFF,
+    // V12_19 rr_cursor_position replaces V12_17 gc_cursor semantics.
+    engineGcCursorOff: V12_19_SBF_ENGINE_RR_CURSOR_OFF
   };
 }
 var V12_1_SBF_ACCOUNT_SIZE = 280;
@@ -3675,24 +3703,25 @@ function parseEngine(data) {
   const isV12_17 = layout.accountSize === V12_17_ACCOUNT_SIZE || layout.accountSize === V12_17_ACCOUNT_SIZE_SBF;
   const isV12_15 = !isV12_17 && (layout.accountSize === V12_15_ACCOUNT_SIZE || layout.accountSize === V12_15_ACCOUNT_SIZE_SMALL) && (layout.engineOff === V12_15_ENGINE_OFF || layout.engineOff === V12_15_ENGINE_OFF_SBF);
   if (isV12_17) {
-    const isSbf = layout.engineOff === V12_17_ENGINE_OFF_SBF || layout.engineOff === V12_19_ENGINE_OFF_SBF;
-    const currentSlotOff = isSbf ? V12_17_SBF_ENGINE_CURRENT_SLOT_OFF : V12_17_ENGINE_CURRENT_SLOT_OFF;
-    const marketModeOff = isSbf ? V12_17_SBF_ENGINE_MARKET_MODE_OFF : V12_17_ENGINE_MARKET_MODE_OFF;
-    const cTotOff = isSbf ? V12_17_SBF_ENGINE_C_TOT_OFF : V12_17_ENGINE_C_TOT_OFF;
-    const pnlPosTotOff = isSbf ? V12_17_SBF_ENGINE_PNL_POS_TOT_OFF : V12_17_ENGINE_PNL_POS_TOT_OFF;
-    const pnlMaturedOff = isSbf ? V12_17_SBF_ENGINE_PNL_MATURED_POS_TOT_OFF : V12_17_ENGINE_PNL_MATURED_POS_TOT_OFF;
-    const negPnlOff = isSbf ? V12_17_SBF_ENGINE_NEG_PNL_COUNT_OFF : V12_17_ENGINE_NEG_PNL_COUNT_OFF;
-    const oraclePriceOff = isSbf ? V12_17_SBF_ENGINE_LAST_ORACLE_PRICE_OFF : V12_17_ENGINE_LAST_ORACLE_PRICE_OFF;
-    const fundPxLastOff = isSbf ? V12_17_SBF_ENGINE_FUND_PX_LAST_OFF : V12_17_ENGINE_FUND_PX_LAST_OFF;
-    const fLongNumOff = isSbf ? V12_17_SBF_ENGINE_F_LONG_NUM_OFF : V12_17_ENGINE_F_LONG_NUM_OFF;
-    const fShortNumOff = isSbf ? V12_17_SBF_ENGINE_F_SHORT_NUM_OFF : V12_17_ENGINE_F_SHORT_NUM_OFF;
-    const resolvedKLongOff = isSbf ? 288 : V12_17_ENGINE_RESOLVED_K_LONG_OFF;
-    const resolvedKShortOff = isSbf ? 304 : V12_17_ENGINE_RESOLVED_K_SHORT_OFF;
-    const resolvedLivePriceOff = isSbf ? 320 : V12_17_ENGINE_RESOLVED_LIVE_PRICE_OFF;
-    const lastCrankSlotOff = isSbf ? V12_17_SBF_ENGINE_LAST_CRANK_SLOT_OFF : V12_17_ENGINE_LAST_CRANK_SLOT_OFF;
-    const gcCursorOff = isSbf ? V12_17_SBF_ENGINE_GC_CURSOR_OFF : V12_17_ENGINE_GC_CURSOR_OFF;
-    const oiEffLongOff = isSbf ? V12_17_SBF_ENGINE_OI_EFF_LONG_OFF : V12_17_ENGINE_OI_EFF_LONG_OFF;
-    const oiEffShortOff = isSbf ? V12_17_SBF_ENGINE_OI_EFF_SHORT_OFF : V12_17_ENGINE_OI_EFF_SHORT_OFF;
+    const isV12_19 = layout.engineOff === V12_19_ENGINE_OFF_SBF;
+    const isSbf = layout.engineOff === V12_17_ENGINE_OFF_SBF || isV12_19;
+    const currentSlotOff = isV12_19 ? V12_19_SBF_ENGINE_CURRENT_SLOT_OFF : isSbf ? V12_17_SBF_ENGINE_CURRENT_SLOT_OFF : V12_17_ENGINE_CURRENT_SLOT_OFF;
+    const marketModeOff = isV12_19 ? V12_19_SBF_ENGINE_MARKET_MODE_OFF : isSbf ? V12_17_SBF_ENGINE_MARKET_MODE_OFF : V12_17_ENGINE_MARKET_MODE_OFF;
+    const cTotOff = isV12_19 ? V12_19_SBF_ENGINE_C_TOT_OFF : isSbf ? V12_17_SBF_ENGINE_C_TOT_OFF : V12_17_ENGINE_C_TOT_OFF;
+    const pnlPosTotOff = isV12_19 ? V12_19_SBF_ENGINE_PNL_POS_TOT_OFF : isSbf ? V12_17_SBF_ENGINE_PNL_POS_TOT_OFF : V12_17_ENGINE_PNL_POS_TOT_OFF;
+    const pnlMaturedOff = isV12_19 ? V12_19_SBF_ENGINE_PNL_MATURED_POS_TOT_OFF : isSbf ? V12_17_SBF_ENGINE_PNL_MATURED_POS_TOT_OFF : V12_17_ENGINE_PNL_MATURED_POS_TOT_OFF;
+    const negPnlOff = isV12_19 ? V12_19_SBF_ENGINE_NEG_PNL_COUNT_OFF : isSbf ? V12_17_SBF_ENGINE_NEG_PNL_COUNT_OFF : V12_17_ENGINE_NEG_PNL_COUNT_OFF;
+    const oraclePriceOff = isV12_19 ? V12_19_SBF_ENGINE_LAST_ORACLE_PRICE_OFF : isSbf ? V12_17_SBF_ENGINE_LAST_ORACLE_PRICE_OFF : V12_17_ENGINE_LAST_ORACLE_PRICE_OFF;
+    const fundPxLastOff = isV12_19 ? V12_19_SBF_ENGINE_FUND_PX_LAST_OFF : isSbf ? V12_17_SBF_ENGINE_FUND_PX_LAST_OFF : V12_17_ENGINE_FUND_PX_LAST_OFF;
+    const fLongNumOff = isV12_19 ? V12_19_SBF_ENGINE_F_LONG_NUM_OFF : isSbf ? V12_17_SBF_ENGINE_F_LONG_NUM_OFF : V12_17_ENGINE_F_LONG_NUM_OFF;
+    const fShortNumOff = isV12_19 ? V12_19_SBF_ENGINE_F_SHORT_NUM_OFF : isSbf ? V12_17_SBF_ENGINE_F_SHORT_NUM_OFF : V12_17_ENGINE_F_SHORT_NUM_OFF;
+    const resolvedKLongOff = isV12_19 ? 288 : isSbf ? 288 : V12_17_ENGINE_RESOLVED_K_LONG_OFF;
+    const resolvedKShortOff = isV12_19 ? 304 : isSbf ? 304 : V12_17_ENGINE_RESOLVED_K_SHORT_OFF;
+    const resolvedLivePriceOff = isV12_19 ? V12_19_SBF_ENGINE_RESOLVED_LIVE_PRICE_OFF : isSbf ? 320 : V12_17_ENGINE_RESOLVED_LIVE_PRICE_OFF;
+    const lastCrankSlotOff = isV12_19 ? V12_19_SBF_ENGINE_LAST_MARKET_SLOT_OFF : isSbf ? V12_17_SBF_ENGINE_LAST_CRANK_SLOT_OFF : V12_17_ENGINE_LAST_CRANK_SLOT_OFF;
+    const gcCursorOff = isV12_19 ? V12_19_SBF_ENGINE_RR_CURSOR_OFF : isSbf ? V12_17_SBF_ENGINE_GC_CURSOR_OFF : V12_17_ENGINE_GC_CURSOR_OFF;
+    const oiEffLongOff = isV12_19 ? V12_19_SBF_ENGINE_OI_EFF_LONG_OFF : isSbf ? V12_17_SBF_ENGINE_OI_EFF_LONG_OFF : V12_17_ENGINE_OI_EFF_LONG_OFF;
+    const oiEffShortOff = isV12_19 ? V12_19_SBF_ENGINE_OI_EFF_SHORT_OFF : isSbf ? V12_17_SBF_ENGINE_OI_EFF_SHORT_OFF : V12_17_ENGINE_OI_EFF_SHORT_OFF;
     const longOi = readU128LE(data, base + oiEffLongOff);
     const shortOi = readU128LE(data, base + oiEffShortOff);
     const bitmapEnd = layout.engineBitmapOff + layout.bitmapWords * 8;

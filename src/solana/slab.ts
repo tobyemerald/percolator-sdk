@@ -895,17 +895,49 @@ for (const n of V12_17_TIERS) {
   V12_17_SIZES.set(sbfSize, n);
 }
 
-// ---- V12_19 layout constants (CONFIG_LEN +16 = 528, ENGINE_OFFSET = 600) ----
+// ---- V12_19 layout constants (CONFIG_LEN = 528, ENGINE_OFFSET = 600) ----
 // Verified against /Users/khubair/perc-sync/work/percolator-prog tests/common/mod.rs:60-61
-// (`pub const ENGINE_OFFSET: usize = 600`) and tests/test_conservation.rs:769
-// (engine.vault U128 at slab+616 = ENGINE_OFFSET+16).
+// (`pub const ENGINE_OFFSET: usize = 600`) and tests/test_conservation.rs L4574, L4586
+// (PNL_POS_TOT_OFFSET = 600+344, C_TOT_OFFSET = 600+328) and tests/common/mod.rs:2185
+// (LAST_MARKET_SLOT_OFFSET = ENGINE_OFFSET+656).
 //
-// Engine struct internal layout is unchanged from V12_17 SBF — only the
-// header+config size grew by 16 bytes (MarketConfig added pending_admin_aux
-// and small alignment padding fields). Account size, bitmap offset, and
-// generation table layout inherit from V12_17 SBF exactly.
+// V12_19 RiskEngine struct is significantly different from V12_17 SBF:
+// - removed: last_crank_slot, gc_cursor, resolved_k_long/short (replaced by *_terminal_delta)
+// - added:   resolved_slot, resolved_payout_h_num/h_den/ready,
+//            adl_mult_long/short, adl_coeff_long/short, adl_epoch_*,
+//            adl_epoch_start_k_long/short, side_mode_long/short,
+//            stored_pos_count_*, stale_account_count_*, phantom_dust_bound_*,
+//            materialized_account_count, rr_cursor_position, sweep_generation,
+//            price_move_consumed_bps_this_generation, last_market_slot,
+//            f_epoch_start_long_num, f_epoch_start_short_num
+// Engine internal offsets must therefore be computed for V12_19 separately,
+// NOT inherited from V12_17 SBF.
+//
+// SBF (i128 align=8). Walked field-by-field against the v12.19 RiskEngine
+// definition at /Users/khubair/perc-sync/work/percolator/src/percolator.rs:581.
 const V12_19_CONFIG_LEN     = 528;  // V12_17 512 + 16
 const V12_19_ENGINE_OFF_SBF = 600;  // align_up(72 + 528, 8) = 600
+
+// V12_19 SBF engine field offsets (relative to engine start).
+const V12_19_SBF_ENGINE_CURRENT_SLOT_OFF       = 216;  // after params(184)
+const V12_19_SBF_ENGINE_MARKET_MODE_OFF        = 224;
+const V12_19_SBF_ENGINE_RESOLVED_PRICE_OFF     = 232;
+const V12_19_SBF_ENGINE_RESOLVED_SLOT_OFF      = 240;
+const V12_19_SBF_ENGINE_RESOLVED_LIVE_PRICE_OFF = 320;
+const V12_19_SBF_ENGINE_C_TOT_OFF              = 328;  // probe-confirmed
+const V12_19_SBF_ENGINE_PNL_POS_TOT_OFF        = 344;  // probe-confirmed
+const V12_19_SBF_ENGINE_PNL_MATURED_POS_TOT_OFF = 360;
+const V12_19_SBF_ENGINE_OI_EFF_LONG_OFF        = 488;
+const V12_19_SBF_ENGINE_OI_EFF_SHORT_OFF       = 504;
+// V12_19 packs side_mode_long/short as adjacent u8 bytes (520, 521) with
+// 6 bytes padding before the next u64 at 528.
+const V12_19_SBF_ENGINE_NEG_PNL_COUNT_OFF      = 608;
+const V12_19_SBF_ENGINE_RR_CURSOR_OFF          = 616;
+const V12_19_SBF_ENGINE_LAST_ORACLE_PRICE_OFF  = 640;
+const V12_19_SBF_ENGINE_FUND_PX_LAST_OFF       = 648;
+const V12_19_SBF_ENGINE_LAST_MARKET_SLOT_OFF   = 656;  // probe-confirmed
+const V12_19_SBF_ENGINE_F_LONG_NUM_OFF         = 664;
+const V12_19_SBF_ENGINE_F_SHORT_NUM_OFF        = 680;
 
 // V12_19 SLAB_LEN values verified against
 // /Users/khubair/perc-sync/work/percolator-prog/tests/cu_benchmark.rs:49-64
@@ -921,10 +953,13 @@ const V12_19_SIZES = new Map<number, number>([
 ]);
 
 /**
- * V12_19 slab layout. Engine struct internals are identical to V12_17 SBF.
- * Only header+config grew by 16 bytes (CONFIG_LEN 512 -> 528), shifting
- * engineOff from 584 to 600 and accountsOff by the same 16. Everything
- * else inherits from buildLayoutV12_17 SBF mode.
+ * V12_19 slab layout. Engine struct grew vs V12_17 (added resolved_slot,
+ * adl_mult/coeff/epoch_*, side_mode_*, stored_pos_count_*, stale_account_count_*,
+ * phantom_dust_bound_*, rr_cursor_position, sweep_generation,
+ * price_move_consumed_bps_this_generation, last_market_slot,
+ * f_epoch_start_*; removed last_crank_slot, gc_cursor). Engine internal
+ * offsets must be V12_19-specific. Account struct + bitmap layout are
+ * unchanged, so those are inherited from V12_17 SBF.
  */
 function buildLayoutV12_19(maxAccounts: number, dataLen: number): SlabLayout {
   const base = buildLayoutV12_17(maxAccounts, dataLen);
@@ -933,6 +968,19 @@ function buildLayoutV12_19(maxAccounts: number, dataLen: number): SlabLayout {
     configLen: V12_19_CONFIG_LEN,
     engineOff: V12_19_ENGINE_OFF_SBF,
     accountsOff: V12_19_ENGINE_OFF_SBF + (base.accountsOff - base.engineOff),
+    // V12_19 engine field offsets (only the fields exposed in SlabLayout).
+    // Other engine fields (negPnlCount, fundPxLast, fLongNum, fShortNum,
+    // lastOraclePrice, marketMode, pnlMaturedPosTot) are read by parseEngine
+    // via its own version-aware switch keyed on engineOff === 600.
+    engineCurrentSlotOff: V12_19_SBF_ENGINE_CURRENT_SLOT_OFF,
+    engineCTotOff: V12_19_SBF_ENGINE_C_TOT_OFF,
+    enginePnlPosTotOff: V12_19_SBF_ENGINE_PNL_POS_TOT_OFF,
+    engineLongOiOff: V12_19_SBF_ENGINE_OI_EFF_LONG_OFF,
+    engineShortOiOff: V12_19_SBF_ENGINE_OI_EFF_SHORT_OFF,
+    // V12_19 last_market_slot replaces V12_17 last_crank_slot semantics.
+    engineLastCrankSlotOff: V12_19_SBF_ENGINE_LAST_MARKET_SLOT_OFF,
+    // V12_19 rr_cursor_position replaces V12_17 gc_cursor semantics.
+    engineGcCursorOff: V12_19_SBF_ENGINE_RR_CURSOR_OFF,
   };
 }
 
@@ -2891,29 +2939,51 @@ export function parseEngine(data: Uint8Array): EngineState {
   const isV12_15 = !isV12_17 && (layout.accountSize === V12_15_ACCOUNT_SIZE || layout.accountSize === V12_15_ACCOUNT_SIZE_SMALL) && (layout.engineOff === V12_15_ENGINE_OFF || layout.engineOff === V12_15_ENGINE_OFF_SBF);
 
   // V12_17: completely new engine layout — per-side funding, no stored funding_rate_e9.
-  // V12_19 uses the same engine struct as V12_17 SBF, just with engineOff
-  // shifted +16 (configLen 528 vs 512). Treat both 584 and 600 as SBF.
+  // V12_19 has a substantially expanded RiskEngine struct (added resolved_slot,
+  // adl_*, side_mode_*, stored_pos_count_*, phantom_dust_bound_*, rr_cursor,
+  // sweep_generation, last_market_slot, etc.). Field offsets within the engine
+  // are NOT the same as V12_17 SBF.
   if (isV12_17) {
-    const isSbf = layout.engineOff === V12_17_ENGINE_OFF_SBF || layout.engineOff === V12_19_ENGINE_OFF_SBF;
+    const isV12_19 = layout.engineOff === V12_19_ENGINE_OFF_SBF;
+    const isSbf = layout.engineOff === V12_17_ENGINE_OFF_SBF || isV12_19;
 
-    const currentSlotOff = isSbf ? V12_17_SBF_ENGINE_CURRENT_SLOT_OFF : V12_17_ENGINE_CURRENT_SLOT_OFF;
-    const marketModeOff = isSbf ? V12_17_SBF_ENGINE_MARKET_MODE_OFF : V12_17_ENGINE_MARKET_MODE_OFF;
-    const cTotOff = isSbf ? V12_17_SBF_ENGINE_C_TOT_OFF : V12_17_ENGINE_C_TOT_OFF;
-    const pnlPosTotOff = isSbf ? V12_17_SBF_ENGINE_PNL_POS_TOT_OFF : V12_17_ENGINE_PNL_POS_TOT_OFF;
-    const pnlMaturedOff = isSbf ? V12_17_SBF_ENGINE_PNL_MATURED_POS_TOT_OFF : V12_17_ENGINE_PNL_MATURED_POS_TOT_OFF;
-    const negPnlOff = isSbf ? V12_17_SBF_ENGINE_NEG_PNL_COUNT_OFF : V12_17_ENGINE_NEG_PNL_COUNT_OFF;
-    const oraclePriceOff = isSbf ? V12_17_SBF_ENGINE_LAST_ORACLE_PRICE_OFF : V12_17_ENGINE_LAST_ORACLE_PRICE_OFF;
-    const fundPxLastOff = isSbf ? V12_17_SBF_ENGINE_FUND_PX_LAST_OFF : V12_17_ENGINE_FUND_PX_LAST_OFF;
-    const fLongNumOff = isSbf ? V12_17_SBF_ENGINE_F_LONG_NUM_OFF : V12_17_ENGINE_F_LONG_NUM_OFF;
-    const fShortNumOff = isSbf ? V12_17_SBF_ENGINE_F_SHORT_NUM_OFF : V12_17_ENGINE_F_SHORT_NUM_OFF;
+    const currentSlotOff = isV12_19 ? V12_19_SBF_ENGINE_CURRENT_SLOT_OFF
+                          : isSbf ? V12_17_SBF_ENGINE_CURRENT_SLOT_OFF : V12_17_ENGINE_CURRENT_SLOT_OFF;
+    const marketModeOff = isV12_19 ? V12_19_SBF_ENGINE_MARKET_MODE_OFF
+                          : isSbf ? V12_17_SBF_ENGINE_MARKET_MODE_OFF : V12_17_ENGINE_MARKET_MODE_OFF;
+    const cTotOff = isV12_19 ? V12_19_SBF_ENGINE_C_TOT_OFF
+                    : isSbf ? V12_17_SBF_ENGINE_C_TOT_OFF : V12_17_ENGINE_C_TOT_OFF;
+    const pnlPosTotOff = isV12_19 ? V12_19_SBF_ENGINE_PNL_POS_TOT_OFF
+                          : isSbf ? V12_17_SBF_ENGINE_PNL_POS_TOT_OFF : V12_17_ENGINE_PNL_POS_TOT_OFF;
+    const pnlMaturedOff = isV12_19 ? V12_19_SBF_ENGINE_PNL_MATURED_POS_TOT_OFF
+                          : isSbf ? V12_17_SBF_ENGINE_PNL_MATURED_POS_TOT_OFF : V12_17_ENGINE_PNL_MATURED_POS_TOT_OFF;
+    const negPnlOff = isV12_19 ? V12_19_SBF_ENGINE_NEG_PNL_COUNT_OFF
+                          : isSbf ? V12_17_SBF_ENGINE_NEG_PNL_COUNT_OFF : V12_17_ENGINE_NEG_PNL_COUNT_OFF;
+    const oraclePriceOff = isV12_19 ? V12_19_SBF_ENGINE_LAST_ORACLE_PRICE_OFF
+                          : isSbf ? V12_17_SBF_ENGINE_LAST_ORACLE_PRICE_OFF : V12_17_ENGINE_LAST_ORACLE_PRICE_OFF;
+    const fundPxLastOff = isV12_19 ? V12_19_SBF_ENGINE_FUND_PX_LAST_OFF
+                          : isSbf ? V12_17_SBF_ENGINE_FUND_PX_LAST_OFF : V12_17_ENGINE_FUND_PX_LAST_OFF;
+    const fLongNumOff = isV12_19 ? V12_19_SBF_ENGINE_F_LONG_NUM_OFF
+                          : isSbf ? V12_17_SBF_ENGINE_F_LONG_NUM_OFF : V12_17_ENGINE_F_LONG_NUM_OFF;
+    const fShortNumOff = isV12_19 ? V12_19_SBF_ENGINE_F_SHORT_NUM_OFF
+                          : isSbf ? V12_17_SBF_ENGINE_F_SHORT_NUM_OFF : V12_17_ENGINE_F_SHORT_NUM_OFF;
     // resolved_k offsets: native 304/320, SBF 288/304
-    const resolvedKLongOff = isSbf ? 288 : V12_17_ENGINE_RESOLVED_K_LONG_OFF;
-    const resolvedKShortOff = isSbf ? 304 : V12_17_ENGINE_RESOLVED_K_SHORT_OFF;
-    const resolvedLivePriceOff = isSbf ? 320 : V12_17_ENGINE_RESOLVED_LIVE_PRICE_OFF;
-    const lastCrankSlotOff = isSbf ? V12_17_SBF_ENGINE_LAST_CRANK_SLOT_OFF : V12_17_ENGINE_LAST_CRANK_SLOT_OFF;
-    const gcCursorOff = isSbf ? V12_17_SBF_ENGINE_GC_CURSOR_OFF : V12_17_ENGINE_GC_CURSOR_OFF;
-    const oiEffLongOff = isSbf ? V12_17_SBF_ENGINE_OI_EFF_LONG_OFF : V12_17_ENGINE_OI_EFF_LONG_OFF;
-    const oiEffShortOff = isSbf ? V12_17_SBF_ENGINE_OI_EFF_SHORT_OFF : V12_17_ENGINE_OI_EFF_SHORT_OFF;
+    // V12_19 renamed resolved_k_long/short to *_terminal_delta but kept same offsets.
+    const resolvedKLongOff = isV12_19 ? 288
+                              : isSbf ? 288 : V12_17_ENGINE_RESOLVED_K_LONG_OFF;
+    const resolvedKShortOff = isV12_19 ? 304
+                              : isSbf ? 304 : V12_17_ENGINE_RESOLVED_K_SHORT_OFF;
+    const resolvedLivePriceOff = isV12_19 ? V12_19_SBF_ENGINE_RESOLVED_LIVE_PRICE_OFF
+                              : isSbf ? 320 : V12_17_ENGINE_RESOLVED_LIVE_PRICE_OFF;
+    // V12_19 doesn't have last_crank_slot or gc_cursor; use last_market_slot and rr_cursor.
+    const lastCrankSlotOff = isV12_19 ? V12_19_SBF_ENGINE_LAST_MARKET_SLOT_OFF
+                              : isSbf ? V12_17_SBF_ENGINE_LAST_CRANK_SLOT_OFF : V12_17_ENGINE_LAST_CRANK_SLOT_OFF;
+    const gcCursorOff = isV12_19 ? V12_19_SBF_ENGINE_RR_CURSOR_OFF
+                              : isSbf ? V12_17_SBF_ENGINE_GC_CURSOR_OFF : V12_17_ENGINE_GC_CURSOR_OFF;
+    const oiEffLongOff = isV12_19 ? V12_19_SBF_ENGINE_OI_EFF_LONG_OFF
+                              : isSbf ? V12_17_SBF_ENGINE_OI_EFF_LONG_OFF : V12_17_ENGINE_OI_EFF_LONG_OFF;
+    const oiEffShortOff = isV12_19 ? V12_19_SBF_ENGINE_OI_EFF_SHORT_OFF
+                              : isSbf ? V12_17_SBF_ENGINE_OI_EFF_SHORT_OFF : V12_17_ENGINE_OI_EFF_SHORT_OFF;
 
     const longOi = readU128LE(data, base + oiEffLongOff);
     const shortOi = readU128LE(data, base + oiEffShortOff);

@@ -7,6 +7,52 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [2.0.1] — 2026-04-28
+
+Correctness fix discovered during post-deploy further-verification. The
+v2.0.0 V12_19 slab layout incorrectly inherited engine field offsets from
+V12_17 SBF, but the V12_19 RiskEngine struct grew significantly (added
+resolved_slot, adl_mult/coeff/epoch_*, side_mode_*, stored_pos_count_*,
+phantom_dust_bound_*, rr_cursor_position, sweep_generation,
+last_market_slot, etc.; removed last_crank_slot and gc_cursor).
+
+### Fixed
+
+- `buildLayoutV12_19` now uses V12_19-specific engine field offsets
+  derived by walking the v12.19 RiskEngine struct definition at
+  `/Users/khubair/perc-sync/work/percolator/src/percolator.rs:581`,
+  cross-checked against probe constants in
+  `/Users/khubair/perc-sync/work/percolator-prog/tests/test_conservation.rs:4574,4586`
+  and `/Users/khubair/perc-sync/work/percolator-prog/tests/common/mod.rs:2185`:
+  - `c_tot` at engine+328 (was 336 in v2.0.0).
+  - `pnl_pos_tot` at engine+344 (was 352).
+  - `oi_eff_long/short` at engine+488/504 (was 504/520).
+  - `last_market_slot` at engine+656 (replaces V12_17 `last_crank_slot`).
+  - `rr_cursor_position` at engine+616 (replaces V12_17 `gc_cursor`).
+- `parseEngine` recognises V12_19 explicitly via
+  `layout.engineOff === V12_19_ENGINE_OFF_SBF` and routes to V12_19
+  field offsets instead of conflating with V12_17 SBF.
+
+### Impact
+
+Consumers of v2.0.0 calling `parseEngine` against any v12.19 slab on
+mainnet would have read garbage values for `cTot`, `pnlPosTot`,
+`pnlMaturedPosTot`, `longOi`, `shortOi`, `lastCrankSlot`, `gcCursor`.
+The bug was latent because no v12.19 slabs exist on the deployed program
+yet — no markets created post-2026-04-28 upgrade. v2.0.1 fixes it before
+the first market is initialised.
+
+Transaction-building paths (encoders, account specs, IX_TAG bytes,
+PDAs) were unaffected and remain byte-correct.
+
+### Gates
+
+- pnpm test 792 PASS / 31 SKIPPED.
+- pnpm lint clean.
+- pnpm build clean.
+
+---
+
 ## [2.0.0] — 2026-04-28
 
 Stable release. Cut after the v12.19 mainnet upgrade landed at slot
