@@ -2317,6 +2317,7 @@ var V12_19_CONFIG_LEN = 480;
 var V12_19_ENGINE_OFF_SBF = 616;
 var V12_19_ACCOUNT_SIZE_SBF = 360;
 var V12_19_SBF_ENGINE_BITMAP_OFF = 736;
+var V12_19_SBF_ENGINE_PARAMS_SIZE = 168;
 var V12_19_SBF_ENGINE_CURRENT_SLOT_OFF = 200;
 var V12_19_SBF_ENGINE_MARKET_MODE_OFF = 208;
 var V12_19_SBF_ENGINE_RESOLVED_LIVE_PRICE_OFF = 304;
@@ -2367,6 +2368,7 @@ function buildLayoutV12_19(maxAccounts, _dataLen) {
     accountSize: V12_19_ACCOUNT_SIZE_SBF,
     accountsOff,
     bitmapWords,
+    paramsSize: V12_19_SBF_ENGINE_PARAMS_SIZE,
     engineBitmapOff: V12_19_SBF_ENGINE_BITMAP_OFF,
     // V12_19-specific engine field offsets (probe-confirmed):
     engineCurrentSlotOff: V12_19_SBF_ENGINE_CURRENT_SLOT_OFF,
@@ -3331,6 +3333,19 @@ var V12_1_PARAMS_MIN_INITIAL_DEP_OFF = 120;
 var V12_1_PARAMS_MIN_NZ_MM_OFF = 136;
 var V12_1_PARAMS_MIN_NZ_IM_OFF = 152;
 var V12_1_PARAMS_INS_FLOOR_OFF = 168;
+var V12_19_PARAMS_MAINTENANCE_MARGIN_OFF = 0;
+var V12_19_PARAMS_INITIAL_MARGIN_OFF = 8;
+var V12_19_PARAMS_TRADING_FEE_OFF = 16;
+var V12_19_PARAMS_MAX_ACCOUNTS_OFF = 24;
+var V12_19_PARAMS_LIQ_FEE_BPS_OFF = 32;
+var V12_19_PARAMS_LIQ_FEE_CAP_OFF = 40;
+var V12_19_PARAMS_MIN_LIQ_OFF = 56;
+var V12_19_PARAMS_MIN_NZ_MM_OFF = 72;
+var V12_19_PARAMS_MIN_NZ_IM_OFF = 88;
+var V12_19_PARAMS_H_MIN_OFF = 104;
+var V12_19_PARAMS_H_MAX_OFF = 112;
+var V12_19_PARAMS_RESOLVE_PRICE_DEVIATION_OFF = 120;
+var V12_19_PARAMS_MAX_ACCRUAL_DT_OFF = 128;
 var ACCT_ACCOUNT_ID_OFF = 0;
 var ACCT_CAPITAL_OFF = 8;
 var ACCT_KIND_OFF = 24;
@@ -3736,14 +3751,15 @@ function parseParams(data, layoutHint) {
     throw new Error(`Slab data too short for RiskParams: ${data.length} < ${base + MIN_PARAMS_BYTES}`);
   }
   const isV12_15Params = paramsSize === V12_15_PARAMS_SIZE || paramsSize === 184;
+  const isV12_19Params = layout !== null && layout !== void 0 && layout.engineOff === V12_19_ENGINE_OFF_SBF && paramsSize === V12_19_SBF_ENGINE_PARAMS_SIZE;
   const isV12_1Sbf = !isV12_15Params && layout !== null && layout !== void 0 && layout.engineOff === V12_1_SBF_ENGINE_OFF && paramsSize === 184;
   const result = {
-    warmupPeriodSlots: isV12_15Params ? readU64LE(data, base + V12_15_PARAMS_H_MIN_OFF) : readU64LE(data, base + PARAMS_WARMUP_PERIOD_OFF),
-    maintenanceMarginBps: isV12_15Params ? readU64LE(data, base + 0) : readU64LE(data, base + PARAMS_MAINTENANCE_MARGIN_OFF),
-    initialMarginBps: isV12_15Params ? readU64LE(data, base + 8) : readU64LE(data, base + PARAMS_INITIAL_MARGIN_OFF),
-    tradingFeeBps: isV12_15Params ? readU64LE(data, base + 16) : readU64LE(data, base + PARAMS_TRADING_FEE_OFF),
-    maxAccounts: isV12_15Params ? readU64LE(data, base + V12_15_PARAMS_MAX_ACCOUNTS_OFF) : readU64LE(data, base + PARAMS_MAX_ACCOUNTS_OFF),
-    newAccountFee: isV12_15Params ? readU128LE(data, base + 32) : readU128LE(data, base + PARAMS_NEW_ACCOUNT_FEE_OFF),
+    warmupPeriodSlots: isV12_19Params ? readU64LE(data, base + V12_19_PARAMS_H_MIN_OFF) : isV12_15Params ? readU64LE(data, base + V12_15_PARAMS_H_MIN_OFF) : readU64LE(data, base + PARAMS_WARMUP_PERIOD_OFF),
+    maintenanceMarginBps: isV12_19Params ? readU64LE(data, base + V12_19_PARAMS_MAINTENANCE_MARGIN_OFF) : isV12_15Params ? readU64LE(data, base + 0) : readU64LE(data, base + PARAMS_MAINTENANCE_MARGIN_OFF),
+    initialMarginBps: isV12_19Params ? readU64LE(data, base + V12_19_PARAMS_INITIAL_MARGIN_OFF) : isV12_15Params ? readU64LE(data, base + 8) : readU64LE(data, base + PARAMS_INITIAL_MARGIN_OFF),
+    tradingFeeBps: isV12_19Params ? readU64LE(data, base + V12_19_PARAMS_TRADING_FEE_OFF) : isV12_15Params ? readU64LE(data, base + 16) : readU64LE(data, base + PARAMS_TRADING_FEE_OFF),
+    maxAccounts: isV12_19Params ? readU64LE(data, base + V12_19_PARAMS_MAX_ACCOUNTS_OFF) : isV12_15Params ? readU64LE(data, base + V12_15_PARAMS_MAX_ACCOUNTS_OFF) : readU64LE(data, base + PARAMS_MAX_ACCOUNTS_OFF),
+    newAccountFee: isV12_19Params ? 1n : isV12_15Params ? readU128LE(data, base + 32) : readU128LE(data, base + PARAMS_NEW_ACCOUNT_FEE_OFF),
     // Extended params: defaults; overwritten below if layout supports them
     riskReductionThreshold: 0n,
     maintenanceFeePerSlot: 0n,
@@ -3759,7 +3775,21 @@ function parseParams(data, layoutHint) {
     hMin: 0n,
     hMax: 0n
   };
-  if (isV12_15Params) {
+  if (isV12_19Params) {
+    result.hMin = readU64LE(data, base + V12_19_PARAMS_H_MIN_OFF);
+    result.hMax = readU64LE(data, base + V12_19_PARAMS_H_MAX_OFF);
+    result.riskReductionThreshold = 0n;
+    result.maintenanceFeePerSlot = 0n;
+    result.maxCrankStalenessSlots = readU64LE(data, base + V12_19_PARAMS_MAX_ACCRUAL_DT_OFF);
+    result.liquidationFeeBps = readU64LE(data, base + V12_19_PARAMS_LIQ_FEE_BPS_OFF);
+    result.liquidationFeeCap = readU128LE(data, base + V12_19_PARAMS_LIQ_FEE_CAP_OFF);
+    result.liquidationBufferBps = readU64LE(data, base + V12_19_PARAMS_RESOLVE_PRICE_DEVIATION_OFF);
+    result.minLiquidationAbs = readU128LE(data, base + V12_19_PARAMS_MIN_LIQ_OFF);
+    result.minInitialDeposit = 0n;
+    result.minNonzeroMmReq = readU128LE(data, base + V12_19_PARAMS_MIN_NZ_MM_OFF);
+    result.minNonzeroImReq = readU128LE(data, base + V12_19_PARAMS_MIN_NZ_IM_OFF);
+    result.insuranceFloor = 0n;
+  } else if (isV12_15Params) {
     result.hMin = readU64LE(data, base + V12_15_PARAMS_H_MIN_OFF);
     result.hMax = readU64LE(data, base + V12_15_PARAMS_H_MAX_OFF);
     result.insuranceFloor = readU128LE(data, base + V12_15_PARAMS_INSURANCE_FLOOR_OFF);

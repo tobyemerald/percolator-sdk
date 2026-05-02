@@ -1011,6 +1011,7 @@ function buildLayoutV12_19(maxAccounts: number, _dataLen: number): SlabLayout {
     accountSize: V12_19_ACCOUNT_SIZE_SBF,
     accountsOff,
     bitmapWords,
+    paramsSize: V12_19_SBF_ENGINE_PARAMS_SIZE,
     engineBitmapOff: V12_19_SBF_ENGINE_BITMAP_OFF,
     // V12_19-specific engine field offsets (probe-confirmed):
     engineCurrentSlotOff: V12_19_SBF_ENGINE_CURRENT_SLOT_OFF,
@@ -2119,6 +2120,23 @@ const V12_1_PARAMS_MIN_NZ_MM_OFF = 136;        // u128
 const V12_1_PARAMS_MIN_NZ_IM_OFF = 152;        // u128
 const V12_1_PARAMS_INS_FLOOR_OFF = 168;        // U128
 
+// V12_19 SBF engine RiskParams offsets. The wrapper still accepts a wider
+// InitMarket wire payload for policy fields such as new_account_fee and
+// insurance_floor, but those fields are not stored inside engine RiskParams.
+const V12_19_PARAMS_MAINTENANCE_MARGIN_OFF = 0;
+const V12_19_PARAMS_INITIAL_MARGIN_OFF = 8;
+const V12_19_PARAMS_TRADING_FEE_OFF = 16;
+const V12_19_PARAMS_MAX_ACCOUNTS_OFF = 24;
+const V12_19_PARAMS_LIQ_FEE_BPS_OFF = 32;
+const V12_19_PARAMS_LIQ_FEE_CAP_OFF = 40;
+const V12_19_PARAMS_MIN_LIQ_OFF = 56;
+const V12_19_PARAMS_MIN_NZ_MM_OFF = 72;
+const V12_19_PARAMS_MIN_NZ_IM_OFF = 88;
+const V12_19_PARAMS_H_MIN_OFF = 104;
+const V12_19_PARAMS_H_MAX_OFF = 112;
+const V12_19_PARAMS_RESOLVE_PRICE_DEVIATION_OFF = 120;
+const V12_19_PARAMS_MAX_ACCRUAL_DT_OFF = 128;
+
 // =============================================================================
 // Account Layout (240/248 bytes)
 // The first 240 bytes are identical in V0 and V1.
@@ -3027,6 +3045,9 @@ export function parseParams(data: Uint8Array, layoutHint?: SlabLayout | null): R
   // Detect V12_15 layout: paramsSize=192. In v12.15, warmup_period_slots is replaced by
   // h_min(u64@160) + h_max(u64@168). max_accounts moved to offset 24 (from 32).
   const isV12_15Params = paramsSize === V12_15_PARAMS_SIZE || paramsSize === 184; // 192=native, 184=SBF
+  const isV12_19Params = layout !== null && layout !== undefined &&
+    layout.engineOff === V12_19_ENGINE_OFF_SBF &&
+    paramsSize === V12_19_SBF_ENGINE_PARAMS_SIZE;
 
   // Detect V12_1 SBF layout — deployed struct has different field order from legacy layouts.
   // V12_1 SBF: no riskReductionThreshold/liquidationBufferBps; adds minInitialDeposit/
@@ -3036,22 +3057,34 @@ export function parseParams(data: Uint8Array, layoutHint?: SlabLayout | null): R
 
   // Basic params present in all layouts (offsets 0-55 are identical)
   const result: RiskParams = {
-    warmupPeriodSlots: isV12_15Params
+    warmupPeriodSlots: isV12_19Params
+      ? readU64LE(data, base + V12_19_PARAMS_H_MIN_OFF) // backwards compat: return hMin
+      : isV12_15Params
       ? readU64LE(data, base + V12_15_PARAMS_H_MIN_OFF)   // backwards compat: return hMin
       : readU64LE(data, base + PARAMS_WARMUP_PERIOD_OFF),
-    maintenanceMarginBps: isV12_15Params
+    maintenanceMarginBps: isV12_19Params
+      ? readU64LE(data, base + V12_19_PARAMS_MAINTENANCE_MARGIN_OFF)
+      : isV12_15Params
       ? readU64LE(data, base + 0)   // v12.15: mm_bps is first field (offset 0)
       : readU64LE(data, base + PARAMS_MAINTENANCE_MARGIN_OFF),
-    initialMarginBps: isV12_15Params
+    initialMarginBps: isV12_19Params
+      ? readU64LE(data, base + V12_19_PARAMS_INITIAL_MARGIN_OFF)
+      : isV12_15Params
       ? readU64LE(data, base + 8)
       : readU64LE(data, base + PARAMS_INITIAL_MARGIN_OFF),
-    tradingFeeBps: isV12_15Params
+    tradingFeeBps: isV12_19Params
+      ? readU64LE(data, base + V12_19_PARAMS_TRADING_FEE_OFF)
+      : isV12_15Params
       ? readU64LE(data, base + 16)
       : readU64LE(data, base + PARAMS_TRADING_FEE_OFF),
-    maxAccounts: isV12_15Params
+    maxAccounts: isV12_19Params
+      ? readU64LE(data, base + V12_19_PARAMS_MAX_ACCOUNTS_OFF)
+      : isV12_15Params
       ? readU64LE(data, base + V12_15_PARAMS_MAX_ACCOUNTS_OFF)  // offset 24 in v12.15
       : readU64LE(data, base + PARAMS_MAX_ACCOUNTS_OFF),
-    newAccountFee: isV12_15Params
+    newAccountFee: isV12_19Params
+      ? 1n // v12.19 wrapper hardcodes a one-base-unit anti-spam fee at InitUser/InitLP.
+      : isV12_15Params
       ? readU128LE(data, base + 32)  // offset 32 in v12.15
       : readU128LE(data, base + PARAMS_NEW_ACCOUNT_FEE_OFF),
     // Extended params: defaults; overwritten below if layout supports them
@@ -3070,7 +3103,23 @@ export function parseParams(data: Uint8Array, layoutHint?: SlabLayout | null): R
     hMax: 0n,
   };
 
-  if (isV12_15Params) {
+  if (isV12_19Params) {
+    // V12_19 engine RiskParams no longer stores wrapper policy fields such as
+    // new_account_fee, min_initial_deposit, insurance_floor, or maintenance fee.
+    result.hMin = readU64LE(data, base + V12_19_PARAMS_H_MIN_OFF);
+    result.hMax = readU64LE(data, base + V12_19_PARAMS_H_MAX_OFF);
+    result.riskReductionThreshold = 0n;
+    result.maintenanceFeePerSlot = 0n;
+    result.maxCrankStalenessSlots = readU64LE(data, base + V12_19_PARAMS_MAX_ACCRUAL_DT_OFF);
+    result.liquidationFeeBps = readU64LE(data, base + V12_19_PARAMS_LIQ_FEE_BPS_OFF);
+    result.liquidationFeeCap = readU128LE(data, base + V12_19_PARAMS_LIQ_FEE_CAP_OFF);
+    result.liquidationBufferBps = readU64LE(data, base + V12_19_PARAMS_RESOLVE_PRICE_DEVIATION_OFF);
+    result.minLiquidationAbs = readU128LE(data, base + V12_19_PARAMS_MIN_LIQ_OFF);
+    result.minInitialDeposit = 0n;
+    result.minNonzeroMmReq = readU128LE(data, base + V12_19_PARAMS_MIN_NZ_MM_OFF);
+    result.minNonzeroImReq = readU128LE(data, base + V12_19_PARAMS_MIN_NZ_IM_OFF);
+    result.insuranceFloor = 0n;
+  } else if (isV12_15Params) {
     // V12_15 RiskParams: read hMin/hMax, insurance_floor occupies offset 144.
     result.hMin = readU64LE(data, base + V12_15_PARAMS_H_MIN_OFF);
     result.hMax = readU64LE(data, base + V12_15_PARAMS_H_MAX_OFF);

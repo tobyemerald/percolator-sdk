@@ -7,6 +7,34 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [2.0.9] — 2026-05-02
+
+v12.19 `RiskParams` parser fix for user account creation and trading.
+
+### Fixed
+
+- Corrected the v12.19 engine `RiskParams` block size from 184 bytes to
+  168 bytes and added the v12.19 field-order parser. The prior parser reused
+  v12.15 offsets, which decoded wrapper-only policy slots as huge bogus u128
+  values.
+- v12.19 `parseParams()` now returns bounded live values for the mainnet slab:
+  `newAccountFee=1`, `minInitialDeposit=0`, `minNonzeroMmReq=21`,
+  `minNonzeroImReq=22`, `hMin=1000`, and `hMax=50000`.
+
+### Impact
+
+- Fixes frontend `encU64: value exceeds u64 max` when creating a user account
+  before placing a trade. The overflow came from `InitUser.feePayment` being
+  derived from the mis-parsed `newAccountFee + minInitialDeposit`.
+
+### Verified
+
+- Live mainnet slab `6ka35x...xe8o` parses with `paramsSize=168` and sane
+  v12.19 risk params.
+- SDK build and full test suite pass.
+
+---
+
 ## [2.0.8] — 2026-05-01
 
 Live v12.19 slab parser fix for the first `af43efc` mainnet market.

@@ -825,3 +825,64 @@ console.log("\n✅ All slab tests passed!");
 
   console.log("✅ V12_17 parseConfig round-trip passed!");
 }
+
+// ─── V12_19 parseParams round-trip ──────────────────────────────────────────
+// v12.19 engine RiskParams are 168 bytes and do not store wrapper-only fields
+// like new_account_fee / min_initial_deposit. This catches accidental fallback
+// to the v12.15 184-byte parser, which reads huge bogus u128 values and breaks
+// frontend InitUser encoding.
+{
+  console.log("\nTesting V12_19 parseParams round-trip...");
+
+  const V12_19_SBF_SMALL_SIZE = 96_784;
+  const ENGINE_OFF = 616;
+  const PARAMS_OFF = ENGINE_OFF + 32;
+  const buf = Buffer.alloc(V12_19_SBF_SMALL_SIZE);
+
+  // Minimum header setup so detectSlabLayout works and future header reads are sane.
+  buf.writeBigUInt64LE(0x504552434f4c4154n, 0); // magic "PERCOLAT"
+  buf.writeUInt32LE(2, 8);                       // version
+  buf.writeUInt8(255, 12);                       // bump
+
+  buf.writeBigUInt64LE(500n, PARAMS_OFF + 0);       // maintenance_margin_bps
+  buf.writeBigUInt64LE(1000n, PARAMS_OFF + 8);      // initial_margin_bps
+  buf.writeBigUInt64LE(5n, PARAMS_OFF + 16);        // trading_fee_bps
+  buf.writeBigUInt64LE(256n, PARAMS_OFF + 24);      // max_accounts
+  buf.writeBigUInt64LE(50n, PARAMS_OFF + 32);       // liquidation_fee_bps
+  writeU128LE(buf, PARAMS_OFF + 40, 1_000_000_000_000n);
+  writeU128LE(buf, PARAMS_OFF + 56, 0n);            // min_liquidation_abs
+  writeU128LE(buf, PARAMS_OFF + 72, 21n);           // min_nonzero_mm_req
+  writeU128LE(buf, PARAMS_OFF + 88, 22n);           // min_nonzero_im_req
+  buf.writeBigUInt64LE(1000n, PARAMS_OFF + 104);    // h_min
+  buf.writeBigUInt64LE(50_000n, PARAMS_OFF + 112);  // h_max
+  buf.writeBigUInt64LE(100n, PARAMS_OFF + 120);     // resolve_price_deviation_bps
+  buf.writeBigUInt64LE(100n, PARAMS_OFF + 128);     // max_accrual_dt_slots
+  buf.writeBigUInt64LE(10_000n, PARAMS_OFF + 136);  // max_abs_funding_e9_per_slot
+  buf.writeBigUInt64LE(10_000_000n, PARAMS_OFF + 144);
+  buf.writeBigUInt64LE(256n, PARAMS_OFF + 152);
+  buf.writeBigUInt64LE(4n, PARAMS_OFF + 160);
+
+  const layout = detectSlabLayout(buf.length, buf);
+  assert(layout !== null, "V12_19 layout detected");
+  assert(layout!.paramsSize === 168, `V12_19 paramsSize expected 168, got ${layout!.paramsSize}`);
+
+  const p = parseParams(buf, layout);
+  assert(p.maintenanceMarginBps === 500n, `maintenanceMarginBps expected 500, got ${p.maintenanceMarginBps}`);
+  assert(p.initialMarginBps === 1000n, `initialMarginBps expected 1000, got ${p.initialMarginBps}`);
+  assert(p.tradingFeeBps === 5n, `tradingFeeBps expected 5, got ${p.tradingFeeBps}`);
+  assert(p.maxAccounts === 256n, `maxAccounts expected 256, got ${p.maxAccounts}`);
+  assert(p.newAccountFee === 1n, `newAccountFee expected wrapper default 1, got ${p.newAccountFee}`);
+  assert(p.minInitialDeposit === 0n, `minInitialDeposit expected 0, got ${p.minInitialDeposit}`);
+  assert(p.liquidationFeeBps === 50n, `liquidationFeeBps expected 50, got ${p.liquidationFeeBps}`);
+  assert(p.liquidationFeeCap === 1_000_000_000_000n, `liquidationFeeCap mismatch: ${p.liquidationFeeCap}`);
+  assert(p.minLiquidationAbs === 0n, `minLiquidationAbs expected 0, got ${p.minLiquidationAbs}`);
+  assert(p.minNonzeroMmReq === 21n, `minNonzeroMmReq expected 21, got ${p.minNonzeroMmReq}`);
+  assert(p.minNonzeroImReq === 22n, `minNonzeroImReq expected 22, got ${p.minNonzeroImReq}`);
+  assert(p.hMin === 1000n, `hMin expected 1000, got ${p.hMin}`);
+  assert(p.hMax === 50_000n, `hMax expected 50000, got ${p.hMax}`);
+  assert(p.liquidationBufferBps === 100n, `resolve/deviation slot expected 100, got ${p.liquidationBufferBps}`);
+  console.log("  ✓ parseParams reads V12_19 engine RiskParams with correct 168-byte layout");
+  console.log("  ✓ Wrapper-only InitUser policy fields are bounded defaults, not bogus u128 reads");
+
+  console.log("✅ V12_19 parseParams round-trip passed!");
+}
