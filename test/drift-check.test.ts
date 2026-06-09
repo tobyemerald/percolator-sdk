@@ -353,8 +353,10 @@ describe.skip("encodeInitMarket — 352-byte layout (post-3-u128-fields bump)", 
 
 describe("SDK drift guards", () => {
   it("removed wrapper encoders fail fast instead of serializing dead tags", () => {
-    expect(() => encodeTradeCpiV2({ lpIdx: 1, userIdx: 2, size: "3", bump: 4 })).toThrow(/tag 35/i);
-    expect(() => encodeSetPythOracle({ feedId: new Uint8Array(32), maxStalenessSecs: 1n, confFilterBps: 1 })).toThrow(/tag 32/i);
+    // TradeCpiV2: encoder throws (tag 105 = TradeCpiV in v17 IX_TAG map, was v12 tag 35)
+    expect(() => encodeTradeCpiV2({ lpIdx: 1, userIdx: 2, size: "3", bump: 4 })).toThrow();
+    // SetPythOracle: encoder throws (tag 20 — not in v17, superseded by InitMarket oracle config)
+    expect(() => encodeSetPythOracle({ feedId: new Uint8Array(32), maxStalenessSecs: 1n, confFilterBps: 1 })).toThrow(/tag 20/i);
   });
 
   it("stake tags reflect the current on-chain mapping", () => {
@@ -377,24 +379,21 @@ describe("SDK drift guards", () => {
 // 2. KeeperCrank / DepositCollateral / WithdrawCollateral — roundtrip
 // ===========================================================================
 
-describe("encodeKeeperCrank — tag + callerIdx(u16) + format_version=1(u8) + candidates", () => {
-  it("encodes tag=5, callerIdx=7, empty candidates", () => {
-    const data = encodeKeeperCrank({ callerIdx: 7 });
-    expect(data.length).toBe(4);
-    expect(data[0]).toBe(IX_TAG.KeeperCrank);       // tag = 5
-    expect(data[0]).toBe(5);
-    expect(readU16LE(data, 1)).toBe(7);              // callerIdx
-    expect(data[3]).toBe(1);                          // format_version = 1
+describe("encodeKeeperCrank — deprecated in v17 (throws removedInstruction)", () => {
+  // encodeKeeperCrank() now throws in v17 — v12 wire format not accepted.
+  // Use encodePermissionlessCrank() instead (tag 5, 53-byte wire).
+  it("encodeKeeperCrank throws removedInstruction (v12 wire not in v17)", () => {
+    expect(() => encodeKeeperCrank({ callerIdx: 7 })).toThrow("encodePermissionlessCrank");
   });
 
-  it("format_version is always 1 (v12.17)", () => {
-    const data = encodeKeeperCrank({ callerIdx: 0 });
-    expect(data[3]).toBe(1);
+  it("encodeKeeperCrank throws for any callerIdx", () => {
+    expect(() => encodeKeeperCrank({ callerIdx: 0 })).toThrow();
+    expect(() => encodeKeeperCrank({ callerIdx: 65535 })).toThrow();
   });
 
-  it("callerIdx max u16 (65535) encodes correctly", () => {
-    const data = encodeKeeperCrank({ callerIdx: 65535 });
-    expect(readU16LE(data, 1)).toBe(65535);
+  it("IX_TAG.KeeperCrank alias = IX_TAG.PermissionlessCrank = 5", () => {
+    expect(IX_TAG.KeeperCrank).toBe(5);
+    expect(IX_TAG.PermissionlessCrank).toBe(5);
   });
 });
 
@@ -569,56 +568,58 @@ describe("STAKE_PROGRAM_ID — address constants", () => {
 // 5. IX_TAG constants — correctness, uniqueness, removed tags, UpdateHyperpMark
 // ===========================================================================
 
-describe("IX_TAG — value correctness and uniqueness", () => {
+describe("IX_TAG — v17 value correctness and uniqueness", () => {
+  // Core v17 tags (stable across versions)
   it("InitMarket === 0", () => expect(IX_TAG.InitMarket).toBe(0));
   it("InitUser === 1", () => expect(IX_TAG.InitUser).toBe(1));
   it("InitLP === 2", () => expect(IX_TAG.InitLP).toBe(2));
   it("DepositCollateral === 3", () => expect(IX_TAG.DepositCollateral).toBe(3));
   it("WithdrawCollateral === 4", () => expect(IX_TAG.WithdrawCollateral).toBe(4));
-  it("KeeperCrank === 5", () => expect(IX_TAG.KeeperCrank).toBe(5));
+  it("KeeperCrank/PermissionlessCrank === 5", () => {
+    expect(IX_TAG.KeeperCrank).toBe(5);
+    expect(IX_TAG.PermissionlessCrank).toBe(5);
+  });
   it("TradeNoCpi === 6", () => expect(IX_TAG.TradeNoCpi).toBe(6));
   it("TradeCpi === 10", () => expect(IX_TAG.TradeCpi).toBe(10));
   it("ResolveMarket === 19", () => expect(IX_TAG.ResolveMarket).toBe(19));
-  it("WithdrawInsurance === 20", () => expect(IX_TAG.WithdrawInsurance).toBe(20));
-  it("UpdateHyperpMark === 34", () => expect(IX_TAG.UpdateHyperpMark).toBe(34));
-  it("TradeCpiV2 === 35", () => expect(IX_TAG.TradeCpiV2).toBe(35));
-  it("ExecuteAdl === 50", () => expect(IX_TAG.ExecuteAdl).toBe(50));
-
-  it("tags 24/25/26 are now QueryLpFees/ReclaimEmptyAccount/SettleAccount", () => {
-    expect(IX_TAG.QueryLpFees).toBe(24);
-    expect(IX_TAG.ReclaimEmptyAccount).toBe(25);
-    expect(IX_TAG.SettleAccount).toBe(26);
-  });
+  // v17 NEW tags (auth overhaul + batch trade)
+  it("UpdateAssetAuthority === 65", () => expect(IX_TAG.UpdateAssetAuthority).toBe(65));
+  it("BatchTradeNoCpi === 66", () => expect(IX_TAG.BatchTradeNoCpi).toBe(66));
+  it("BatchTradeCpi === 67", () => expect(IX_TAG.BatchTradeCpi).toBe(67));
+  it("SetMatcherConfig === 68", () => expect(IX_TAG.SetMatcherConfig).toBe(68));
+  it("RestartAssetOracle === 69", () => expect(IX_TAG.RestartAssetOracle).toBe(69));
+  // v17 LP-vault tags (renumbered from v12 65-71 to 74-80)
+  it("CreateLpVault === 74", () => expect(IX_TAG.CreateLpVault).toBe(74));
+  it("DepositToLpVault === 75", () => expect(IX_TAG.DepositToLpVault).toBe(75));
+  it("RequestRedeemLpShares === 76", () => expect(IX_TAG.RequestRedeemLpShares).toBe(76));
+  it("ExecuteRedemption === 77", () => expect(IX_TAG.ExecuteRedemption).toBe(77));
+  it("LpVaultCrankFees === 78", () => expect(IX_TAG.LpVaultCrankFees).toBe(78));
+  it("CloseLpVault === 80", () => expect(IX_TAG.CloseLpVault).toBe(80));
+  // v17 NFT/B-3 tags
+  it("TransferPortfolioOwnership === 72", () => expect(IX_TAG.TransferPortfolioOwnership).toBe(72));
+  it("SetNftProgramId === 73", () => expect(IX_TAG.SetNftProgramId).toBe(73));
+  // v17 insurance operations
+  it("WithdrawInsuranceAsset === 57", () => expect(IX_TAG.WithdrawInsuranceAsset).toBe(57));
+  it("WithdrawInsurance === 41", () => expect(IX_TAG.WithdrawInsurance).toBe(41));
+  // deprecated v12 tags still present in map (for encoder-throws coverage)
+  it("deprecated v12 ReclaimEmptyAccount === 85", () => expect(IX_TAG.ReclaimEmptyAccount).toBe(85));
+  it("deprecated v12 SettleAccount === 86", () => expect(IX_TAG.SettleAccount).toBe(86));
+  it("deprecated v12 ExecuteAdl === 101", () => expect(IX_TAG.ExecuteAdl).toBe(101));
 
   it("all IX_TAG values are unique (allowing deprecated aliases)", () => {
-    // We have intentional aliases: UpdateRiskParams=22=SetInsuranceWithdrawPolicy, etc.
+    // Some intentional aliases exist: DepositCollateral=Deposit=3, InitUser=InitPortfolio=1, etc.
     // Just verify the unique value count is reasonable (at least 70 distinct values).
     const vals = Object.values(IX_TAG) as number[];
     const unique = new Set(vals);
     expect(unique.size).toBeGreaterThanOrEqual(70);
   });
 
-  it("all IX_TAG values are non-negative integers", () => {
+  it("all IX_TAG values are non-negative integers below 256", () => {
     for (const [name, v] of Object.entries(IX_TAG)) {
       expect(typeof v).toBe("number");
       expect(Number.isInteger(v)).toBe(true);
       expect(v).toBeGreaterThanOrEqual(0);
       expect(v, `IX_TAG.${name} must be < 256 (fits in u8)`).toBeLessThan(256);
-    }
-  });
-
-  it("IX_TAG values form a dense-enough set (no large unexplained gaps)", () => {
-    const vals = (Object.values(IX_TAG) as number[]).sort((a, b) => a - b);
-    const max = vals[vals.length - 1];
-    // Tag 31 is an intentional gap (no decode arm on-chain).
-    // Tags 57 and 78 are removed (keeper fund).
-    // Tags 16 and 17 removed in v1.0.0-beta.29 (Phase G admin-push oracle removal).
-    const KNOWN_GAPS = new Set([16, 17, 31, 57, 78]);
-    const valSet = new Set(vals);
-    for (let i = 0; i <= max; i++) {
-      if (!valSet.has(i) && !KNOWN_GAPS.has(i)) {
-        throw new Error(`Undocumented gap in IX_TAG at ${i} — add a comment or fill it`);
-      }
     }
   });
 });
@@ -628,18 +629,20 @@ describe("IX_TAG — value correctness and uniqueness", () => {
 // ===========================================================================
 
 describe("encoding roundtrip — manual decode verifies no endianness or off-by-one bugs", () => {
-  it("encodeTradeNoCpi: lpIdx, userIdx, size (i128 signed) round-trip", () => {
-    const SIZE = -9_876_543_210n;
-    const data = encodeTradeNoCpi({ lpIdx: 3, userIdx: 77, size: SIZE.toString() });
-    expect(data.length).toBe(21);
+  it("encodeTradeNoCpi v17: assetIndex, sizeQ, execPrice, feeBps round-trip (35 bytes)", () => {
+    const SIZE_Q = -9_876_543_210n;
+    const data = encodeTradeNoCpi({ assetIndex: 3, sizeQ: SIZE_Q, execPrice: 50_000_000_000n, feeBps: 30n });
+    // v17 wire: tag(1) + asset_index(u16) + size_q(i128) + exec_price(u64) + fee_bps(u64) = 35 bytes
+    expect(data.length).toBe(35);
     expect(data[0]).toBe(IX_TAG.TradeNoCpi);
-    expect(readU16LE(data, 1)).toBe(3);          // lpIdx
-    expect(readU16LE(data, 3)).toBe(77);         // userIdx
-    // Decode i128: read as two u64, reconstruct signed
-    const lo = readU64LE(data, 5);
-    const hi = readI64LE(data, 13);
+    expect(readU16LE(data, 1)).toBe(3);          // assetIndex
+    // Decode i128 sizeQ at [3..19]
+    const lo = readU64LE(data, 3);
+    const hi = readI64LE(data, 11);
     const decoded = lo | (hi << 64n);
-    expect(decoded).toBe(SIZE);
+    expect(decoded).toBe(SIZE_Q);
+    // fee_bps at [27..35]
+    expect(readU64LE(data, 27)).toBe(30n);
   });
 
   it("encodeDepositCollateral: userIdx + amount round-trip at various amounts", () => {
@@ -663,12 +666,10 @@ describe("encoding roundtrip — manual decode verifies no endianness or off-by-
     expect(readU64LE(data, 3)).toBe(123_456_789n);
   });
 
-  it("encodeKeeperCrank: all callerIdx values round-trip", () => {
+  it("encodeKeeperCrank: deprecated in v17 — throws for all callerIdx values", () => {
+    // v12 KeeperCrank wire format not accepted by v17 — all calls throw
     for (const callerIdx of [0, 1, 500, 65535]) {
-      const data = encodeKeeperCrank({ callerIdx });
-      expect(data[0]).toBe(IX_TAG.KeeperCrank);
-      expect(readU16LE(data, 1)).toBe(callerIdx);
-      expect(data[3]).toBe(1); // format_version = 1
+      expect(() => encodeKeeperCrank({ callerIdx })).toThrow("encodePermissionlessCrank");
     }
   });
 

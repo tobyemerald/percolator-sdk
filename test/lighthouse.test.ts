@@ -282,17 +282,20 @@ describe("parseErrorFromLogs — error code extraction", () => {
     expect(result!.code).toBe(0x1790);
   });
 
-  it("resolves Percolator error 0x10 to EngineInvalidMatchingEngine", () => {
+  it("resolves Percolator error 0x10 to EngineProvenanceMismatch (v17 code 16)", () => {
+    // v17: code 16 = EngineProvenanceMismatch (was EngineInvalidMatchingEngine in v12.x)
     const logs = [
       "Program PERCopuL6d4mMhAPGvVSfyFMuDe22p3vBE3Nz24SSXD failed: custom program error: 0x10",
     ];
     const result = parseErrorFromLogs(logs);
     expect(result).not.toBeNull();
     expect(result!.code).toBe(16);
-    expect(result!.name).toBe("EngineInvalidMatchingEngine");
+    expect(result!.name).toBe("EngineProvenanceMismatch");
   });
 
-  it("resolves Percolator ADL errors (61-65)", () => {
+  it("v17: Percolator errors 61-65 return Unknown(...) — not in v17 error table", () => {
+    // In v12.x, codes 61-65 were ADL-specific errors (EngineSideBlocked etc.).
+    // In v17, the error table ends at 46. Codes 61-65 are undefined → Unknown(N).
     for (const code of [61, 62, 63, 64, 65]) {
       const hex = code.toString(16);
       const logs = [
@@ -301,8 +304,8 @@ describe("parseErrorFromLogs — error code extraction", () => {
       const result = parseErrorFromLogs(logs);
       expect(result).not.toBeNull();
       expect(result!.code).toBe(code);
-      // ADL errors are known Percolator errors
-      expect(result!.name).not.toContain("Unknown");
+      // v17: codes 61-65 are NOT known → name is Unknown(N)
+      expect(result!.name).toBe(`Unknown(${code})`);
     }
   });
 

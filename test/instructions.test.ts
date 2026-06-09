@@ -43,11 +43,22 @@ describe("IX_TAG values", () => {
     expect(IX_TAG.InitLP).toBe(2);
     expect(IX_TAG.DepositCollateral).toBe(3);
     expect(IX_TAG.WithdrawCollateral).toBe(4);
-    expect(IX_TAG.KeeperCrank).toBe(5);
+    expect(IX_TAG.KeeperCrank).toBe(5);          // alias for PermissionlessCrank
+    expect(IX_TAG.PermissionlessCrank).toBe(5);  // v17 canonical name
     expect(IX_TAG.TradeNoCpi).toBe(6);
     expect(IX_TAG.TradeCpi).toBe(10);
     expect(IX_TAG.ResolveMarket).toBe(19);
-    expect(IX_TAG.WithdrawInsurance).toBe(20);
+    // v17 CHANGE: WithdrawInsurance is tag 41 (was tag 20 in v12.x; SetPythOracle is now 20)
+    expect(IX_TAG.WithdrawInsurance).toBe(41);
+    // v17 NEW tags
+    expect(IX_TAG.UpdateAssetAuthority).toBe(65);
+    expect(IX_TAG.BatchTradeNoCpi).toBe(66);
+    expect(IX_TAG.BatchTradeCpi).toBe(67);
+    expect(IX_TAG.SetMatcherConfig).toBe(68);
+    expect(IX_TAG.RestartAssetOracle).toBe(69);
+    expect(IX_TAG.WithdrawInsuranceAsset).toBe(57);
+    expect(IX_TAG.CreateLpVault).toBe(74);
+    expect(IX_TAG.DepositToLpVault).toBe(75);
   });
 });
 
@@ -70,28 +81,44 @@ describe("instruction encoders", () => {
     expect(data[0]).toBe(IX_TAG.WithdrawCollateral);
   });
 
-  it("encodeKeeperCrank produces 4 bytes (empty candidates)", () => {
-    const data = encodeKeeperCrank({ callerIdx: 1 });
-    expect(data.length).toBe(4);
-    expect(data[0]).toBe(IX_TAG.KeeperCrank);
-    expect(data[3]).toBe(1); // format_version = 1
+  it("encodeKeeperCrank throws — v12.17 wire format not accepted by v17 wrapper", () => {
+    // v17: use encodePermissionlessCrank() instead
+    expect(() => encodeKeeperCrank({ callerIdx: 1 })).toThrow(/v12\.17/i);
   });
 
-  it("encodeTradeNoCpi produces 21 bytes", () => {
-    const data = encodeTradeNoCpi({ lpIdx: 0, userIdx: 1, size: "1000000" });
-    expect(data.length).toBe(21);
+  it("encodeTradeNoCpi produces 35 bytes (v17 API)", () => {
+    const data = encodeTradeNoCpi({
+      assetIndex: 0,
+      sizeQ: 1_000_000n,
+      execPrice: 50_000_000_000n,
+      feeBps: 10n,
+    });
+    expect(data.length).toBe(35);
     expect(data[0]).toBe(IX_TAG.TradeNoCpi);
   });
 
-  it("encodeTradeNoCpi with negative size", () => {
-    const data = encodeTradeNoCpi({ lpIdx: 0, userIdx: 1, size: "-1000000" });
-    expect(data.length).toBe(21);
-    expect(data[5]).toBe(192); // -1000000 LE first byte
+  it("encodeTradeNoCpi with negative sizeQ (short position)", () => {
+    const data = encodeTradeNoCpi({
+      assetIndex: 0,
+      sizeQ: -1_000_000n,
+      execPrice: 50_000_000_000n,
+      feeBps: 10n,
+    });
+    expect(data.length).toBe(35);
+    expect(data[0]).toBe(IX_TAG.TradeNoCpi);
+    // sizeQ starts at byte 3 (tag 1 byte + assetIndex 2 bytes), LE i128
+    // -1_000_000 in LE i128 starts with 0xC0 0x78 0xF0 ...
+    expect(data[3]).toBe(0xc0);
   });
 
-  it("encodeTradeCpi produces 29 bytes", () => {
-    const data = encodeTradeCpi({ lpIdx: 2, userIdx: 3, size: "-500", limitPriceE6: "0" });
-    expect(data.length).toBe(29);
+  it("encodeTradeCpi produces 35 bytes (v17 API)", () => {
+    const data = encodeTradeCpi({
+      assetIndex: 2,
+      sizeQ: -500n,
+      feeBps: 10n,
+      limitPrice: 0n,
+    });
+    expect(data.length).toBe(35);
     expect(data[0]).toBe(IX_TAG.TradeCpi);
   });
 
@@ -270,17 +297,24 @@ describe("instruction encoders", () => {
   });
 
   it("removed and disabled encoders throw instead of emitting dead bytes", () => {
-    expect(() => encodeTradeCpiV2({ lpIdx: 2, userIdx: 3, size: "1000000", bump: 254 })).toThrow(/tag 35/i);
+    // TradeCpiV2 (v12 tag 35): tag 35 = ConfigureEwmaMark in v17 — removed
+    expect(() => encodeTradeCpiV2({ lpIdx: 2, userIdx: 3, size: "1000000", bump: 254 })).toThrow(/not in v17|not accepted/i);
+    // UnresolveMarket (v12 tag 36): not in v17
     expect(() => encodeUnresolveMarket({ confirmation: "1" })).toThrow(/tag 36/i);
+    // SetMaintenanceFee (tag 15): not in v17
     expect(() => encodeSetMaintenanceFee({ newFee: "0" })).toThrow(/tag 15/i);
-    expect(() => encodeUpdateRiskParams({ initialMarginBps: "1", maintenanceMarginBps: "1" })).toThrow(/tag 22/i);
-    expect(() => encodeRenounceAdmin()).toThrow(/tag 23/i);
-    expect(() => encodeSetPythOracle({ feedId: new Uint8Array(32), maxStalenessSecs: 1n, confFilterBps: 1 })).toThrow(/tag 32/i);
-    expect(() => encodeUpdateMarkPrice()).toThrow(/tag 33/i);
-    expect(() => encodeSetInsuranceIsolation({ bps: 1 })).toThrow(/tag 42/i);
-    expect(() => encodeSlashCreationDeposit()).toThrow(/tag 58/i);
-    // PERC-628 shared-vault encoders (tags 59-63) are unconditionally enabled in v12.19.
-    // Their old "throw without target" gate was removed when the v12.17 dual-target was dropped.
+    // UpdateRiskParams (tag 18): not in v17 (NOTE: was 22 in an older v12; v17 map has it at 18)
+    expect(() => encodeUpdateRiskParams({ initialMarginBps: "1", maintenanceMarginBps: "1" })).toThrow(/not in v17|not accepted/i);
+    // RenounceAdmin (tag 21): not in v17
+    expect(() => encodeRenounceAdmin()).toThrow(/tag 21/i);
+    // SetPythOracle (tag 20 in v17 IX_TAG map): deprecated/removed — tag 20 = SetPythOracle
+    expect(() => encodeSetPythOracle({ feedId: new Uint8Array(32), maxStalenessSecs: 1n, confFilterBps: 1 })).toThrow(/tag 20/i);
+    // UpdateMarkPrice (tag 90 in v17 IX_TAG map): deprecated/removed
+    expect(() => encodeUpdateMarkPrice()).toThrow(/tag 90/i);
+    // SetInsuranceIsolation (tag 26 in v17 IX_TAG map): deprecated/removed
+    expect(() => encodeSetInsuranceIsolation({ bps: 1 })).toThrow(/tag 26/i);
+    // SlashCreationDeposit (tag 93 in v17 IX_TAG map): deprecated/removed
+    expect(() => encodeSlashCreationDeposit()).toThrow(/tag 93/i);
   });
 });
 
@@ -312,20 +346,15 @@ describe("truncated instruction payloads", () => {
     minNonzeroImReq: "2000",
   } as const;
 
-  const updateConfigArgs = {
-    fundingHorizonSlots: "0",
-    fundingKBps: "0",
-    fundingMaxPremiumBps: "0",
-    fundingMaxBpsPerSlot: "0",
-  } as const;
-
+  // NOTE: encodeKeeperCrank, encodeUpdateConfig, encodeSetOraclePriceCap all throw in v17
+  // (removedInstruction). They are excluded from the truncated-payload test below.
+  // TradeNoCpi/TradeCpi use v17 API (assetIndex/sizeQ/...) — not the old lpIdx/userIdx API.
   const cases: [string, () => Uint8Array][] = [
     ["InitUser", () => encodeInitUser({ feePayment: "1000000" })],
     ["DepositCollateral", () => encodeDepositCollateral({ userIdx: 5, amount: "1000000" })],
     ["WithdrawCollateral", () => encodeWithdrawCollateral({ userIdx: 10, amount: "500000" })],
-    ["KeeperCrank", () => encodeKeeperCrank({ callerIdx: 1 })],
-    ["TradeNoCpi", () => encodeTradeNoCpi({ lpIdx: 0, userIdx: 1, size: "1000000" })],
-    ["TradeCpi", () => encodeTradeCpi({ lpIdx: 2, userIdx: 3, size: "-500", limitPriceE6: "0" })],
+    ["TradeNoCpi", () => encodeTradeNoCpi({ assetIndex: 0, sizeQ: 1_000_000n, execPrice: 50_000_000_000n, feeBps: 10n })],
+    ["TradeCpi", () => encodeTradeCpi({ assetIndex: 2, sizeQ: -500n, feeBps: 10n, limitPrice: 0n })],
     ["LiquidateAtOracle", () => encodeLiquidateAtOracle({ targetIdx: 42 })],
     ["CloseAccount", () => encodeCloseAccount({ userIdx: 100 })],
     ["TopUpInsurance", () => encodeTopUpInsurance({ amount: "5000000" })],
@@ -339,8 +368,6 @@ describe("truncated instruction payloads", () => {
     ],
     ["InitMarket", () => encodeInitMarket(initMarketArgs)],
     ["CloseSlab", () => encodeCloseSlab()],
-    ["UpdateConfig", () => encodeUpdateConfig(updateConfigArgs)],
-    ["SetOraclePriceCap", () => encodeSetOraclePriceCap({ maxChangeE2bps: "1000" })],
     ["ResolveMarket", () => encodeResolveMarket()],
     ["WithdrawInsurance", () => encodeWithdrawInsurance()],
   ];

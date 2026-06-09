@@ -26,62 +26,62 @@ const CALLER = new PublicKey("SysvarC1ock11111111111111111111111111111111");
 // ---------------------------------------------------------------------------
 
 describe("buildAdlInstruction", () => {
-  it("produces correct instruction data (tag=50 + targetIdx u16 LE)", () => {
-    const targetIdx = 7;
-    const ix = buildAdlInstruction(CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID, targetIdx);
+  // NOTE: In v17, ExecuteAdl (tag 101) was removed from the wrapper.
+  // buildAdlInstruction() calls encodeExecuteAdl() which now throws removedInstruction().
+  // These tests verify the throw behavior — not v12 byte encoding.
 
-    // tag=50, targetIdx=7 → [50, 7, 0]
-    const expected = encodeExecuteAdl({ targetIdx });
-    expect(new Uint8Array(ix.data)).toEqual(expected);
+  it("throws because ExecuteAdl is removed in v17 wrapper", () => {
+    expect(() =>
+      buildAdlInstruction(CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID, 7)
+    ).toThrow("not in v17");
   });
 
-  it("uses the correct programId", () => {
-    const ix = buildAdlInstruction(CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID, 0);
-    expect(ix.programId.equals(PROGRAM_ID)).toBe(true);
+  it("throws even with valid programId (v17 removal)", () => {
+    expect(() =>
+      buildAdlInstruction(CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID, 0)
+    ).toThrow();
   });
 
-  it("accounts order: caller(signer,r/o), slab(r/w), clock(r/o), oracle(r/o)", () => {
-    const ix = buildAdlInstruction(CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID, 0);
-    const keys = ix.keys;
-
-    expect(keys).toHaveLength(4);
-    expect(keys[0].pubkey.equals(CALLER)).toBe(true);
-    expect(keys[0].isSigner).toBe(true);
-    expect(keys[0].isWritable).toBe(false);
-
-    expect(keys[1].pubkey.equals(SLAB_KEY)).toBe(true);
-    expect(keys[1].isSigner).toBe(false);
-    expect(keys[1].isWritable).toBe(true);
-
-    expect(keys[2].pubkey.equals(SYSVAR_CLOCK_PUBKEY)).toBe(true);
-    expect(keys[2].isSigner).toBe(false);
-    expect(keys[2].isWritable).toBe(false);
-
-    expect(keys[3].pubkey.equals(ORACLE_KEY)).toBe(true);
-    expect(keys[3].isSigner).toBe(false);
-    expect(keys[3].isWritable).toBe(false);
+  it("encodeExecuteAdl throws removedInstruction (v12 tag 101 not in v17)", () => {
+    expect(() => encodeExecuteAdl({ targetIdx: 5 })).toThrow("not in v17");
   });
 
-  it("appends backup oracle accounts correctly", () => {
+  it("buildAdlInstruction still validates negative targetIdx before throw", () => {
+    expect(() =>
+      buildAdlInstruction(CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID, -1)
+    ).toThrow("non-negative integer");
+  });
+
+  it("buildAdlInstruction still validates NaN before throw", () => {
+    expect(() =>
+      buildAdlInstruction(CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID, NaN)
+    ).toThrow("non-negative integer");
+  });
+
+  it("buildAdlInstruction still validates fractional before throw", () => {
+    expect(() =>
+      buildAdlInstruction(CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID, 1.5)
+    ).toThrow("non-negative integer");
+  });
+
+  it("throws with backup oracle accounts too", () => {
     const backup1 = new PublicKey("7rUiMfQVTRMJb44fzDT7Gq1BGtioN3UVqNKaMVuqyqyH");
-    const backup2 = new PublicKey("So11111111111111111111111111111111111111112");
-    const ix = buildAdlInstruction(CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID, 3, [backup1, backup2]);
-
-    expect(ix.keys).toHaveLength(6);
-    expect(ix.keys[4].pubkey.equals(backup1)).toBe(true);
-    expect(ix.keys[5].pubkey.equals(backup2)).toBe(true);
+    expect(() =>
+      buildAdlInstruction(CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID, 3, [backup1])
+    ).toThrow();
   });
 
-  it("encodes targetIdx=0 correctly", () => {
-    const ix = buildAdlInstruction(CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID, 0);
-    // tag(1) + u16 LE(2) = [50, 0, 0]
-    expect(Array.from(ix.data)).toEqual([50, 0, 0]);
+  it("v12 encodes targetIdx=256 would have been [50, 0, 1] — now throws", () => {
+    expect(() =>
+      buildAdlInstruction(CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID, 256)
+    ).toThrow();
   });
 
-  it("encodes targetIdx=256 correctly", () => {
-    const ix = buildAdlInstruction(CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID, 256);
-    // 256 in u16 LE = [0, 1]
-    expect(Array.from(ix.data)).toEqual([50, 0, 1]);
+  it("targetIdx=256 (large) also throws removedInstruction (ExecuteAdl removed in v17)", () => {
+    // In v12: would have encoded [50, 0, 1] (tag + u16 LE). In v17: always throws.
+    expect(() =>
+      buildAdlInstruction(CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID, 256)
+    ).toThrow("not in v17");
   });
 });
 
@@ -260,24 +260,25 @@ describe("parseAdlEvent", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildAdlInstruction validation", () => {
-  it("rejects negative targetIdx", () => {
+  it("rejects negative targetIdx (validates before removed-instruction throw)", () => {
     const key = PublicKey.default;
     expect(() => buildAdlInstruction(key, key, key, key, -1)).toThrow("non-negative integer");
   });
 
-  it("rejects NaN targetIdx", () => {
+  it("rejects NaN targetIdx (validates before removed-instruction throw)", () => {
     const key = PublicKey.default;
     expect(() => buildAdlInstruction(key, key, key, key, NaN)).toThrow("non-negative integer");
   });
 
-  it("rejects fractional targetIdx", () => {
+  it("rejects fractional targetIdx (validates before removed-instruction throw)", () => {
     const key = PublicKey.default;
     expect(() => buildAdlInstruction(key, key, key, key, 1.5)).toThrow("non-negative integer");
   });
 
-  it("accepts valid targetIdx", () => {
+  it("valid targetIdx still throws removedInstruction (ExecuteAdl removed in v17)", () => {
     const key = PublicKey.default;
-    expect(() => buildAdlInstruction(key, key, key, key, 0)).not.toThrow();
-    expect(() => buildAdlInstruction(key, key, key, key, 255)).not.toThrow();
+    // ExecuteAdl was removed from v17 wrapper; buildAdlInstruction propagates the throw
+    expect(() => buildAdlInstruction(key, key, key, key, 0)).toThrow("not in v17");
+    expect(() => buildAdlInstruction(key, key, key, key, 255)).toThrow("not in v17");
   });
 });

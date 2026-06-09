@@ -1,137 +1,331 @@
 import { PublicKey } from "@solana/web3.js";
 /**
- * Instruction tags - exact match to Rust ix::Instruction::decode
+ * Instruction tags — exact match to Rust ix::Instruction::decode arm in the
+ * v17 converged wrapper (percolator-prog @v17-convergence, source
+ * src/v16_program.rs). Tags are gappy; every absent tag rejects with
+ * InvalidInstructionData.
+ *
+ * v17 breaking changes vs v12.x:
+ *   - Tags 37-73 are COMPLETELY different (toly renumbered 37-64, fork LP-vault
+ *     moved 65-71→74-80, fork NFT-B3 kept 72/73, toly claimed 65-69).
+ *   - Tag 32 UpdateAuthority: v17 has NO kind byte — just new_pubkey[32].
+ *   - Tag 57 is now WithdrawInsuranceAsset{asset_index:u16, amount:u128}.
+ *   - Tag 5 PermissionlessCrank: funding_rate_e9 arg MUST be hardcoded 0n by
+ *     all callers — the program hard-rejects nonzero.
+ *   - Domain fields: u8→u16 everywhere.
  */
 export declare const IX_TAG: {
     readonly InitMarket: 0;
+    readonly InitPortfolio: 1;
+    /** @alias InitUser @since v12.x alias, canonical name is InitPortfolio in v17 */
     readonly InitUser: 1;
+    /** @deprecated v17 has no LP role in the wrapper; matchers run as third-party programs. */
     readonly InitLP: 2;
+    readonly Deposit: 3;
+    /** @alias DepositCollateral @since v12.x alias */
     readonly DepositCollateral: 3;
+    readonly Withdraw: 4;
+    /** @alias WithdrawCollateral @since v12.x alias */
     readonly WithdrawCollateral: 4;
+    /**
+     * PermissionlessCrank (tag 5).
+     *
+     * CRITICAL: The on-chain decoder reads funding_rate_e9 (i128) at bytes [4..20]
+     * and hard-rejects nonzero with InvalidInstructionData. SDK callers MUST use
+     * encodePermissionlessCrank() which hardcodes fundingRateE9=0n. Do NOT
+     * construct the payload manually and omit this field — that produces a
+     * malformed instruction (missing bytes).
+     */
+    readonly PermissionlessCrank: 5;
+    /** @alias KeeperCrank @since v12.x alias */
     readonly KeeperCrank: 5;
     readonly TradeNoCpi: 6;
     readonly LiquidateAtOracle: 7;
+    readonly ClosePortfolio: 8;
+    /** @alias CloseAccount @since v12.x alias */
     readonly CloseAccount: 8;
     readonly TopUpInsurance: 9;
     readonly TradeCpi: 10;
+    /** @deprecated tag 11 has no decode arm in v17 wrapper */
     readonly SetRiskThreshold: 11;
+    /** @deprecated tag 12 has no decode arm in v17 wrapper */
     readonly UpdateAdmin: 12;
     readonly CloseSlab: 13;
-    readonly UpdateConfig: 14;
-    readonly SetMaintenanceFee: 15;
-    readonly SetOraclePriceCap: 18;
     readonly ResolveMarket: 19;
-    readonly WithdrawInsurance: 20;
-    readonly AdminForceClose: 21;
-    readonly SetInsuranceWithdrawPolicy: 22;
-    /** @deprecated Use SetInsuranceWithdrawPolicy */ readonly UpdateRiskParams: 22;
-    readonly WithdrawInsuranceLimited: 23;
-    /** @deprecated Use WithdrawInsuranceLimited */ readonly RenounceAdmin: 23;
-    readonly QueryLpFees: 24;
-    readonly ReclaimEmptyAccount: 25;
-    readonly SettleAccount: 26;
-    readonly DepositFeeCredits: 27;
+    readonly TopUpBackingBucket: 24;
     readonly ConvertReleasedPnl: 28;
-    readonly ResolvePermissionless: 29;
-    readonly ForceCloseResolved: 30;
-    readonly SetPythOracle: 32;
-    readonly UpdateMarkPrice: 33;
-    readonly UpdateHyperpMark: 34;
-    readonly TradeCpiV2: 35;
-    readonly UnresolveMarket: 36;
-    readonly CreateLpVault: 37;
-    readonly LpVaultDeposit: 38;
-    readonly LpVaultWithdraw: 39;
-    readonly LpVaultCrankFees: 40;
-    /** PERC-306: Fund per-market isolated insurance balance */
-    readonly FundMarketInsurance: 41;
-    /** PERC-306: Set insurance isolation BPS for a market */
-    readonly SetInsuranceIsolation: 42;
-    /** PERC-314: Challenge settlement price during dispute window */
-    readonly ChallengeSettlement: 43;
-    /** PERC-314: Resolve dispute (admin adjudication) */
-    readonly ResolveDispute: 44;
-    /** PERC-315: Deposit LP vault tokens as perp collateral */
-    readonly DepositLpCollateral: 45;
-    /** PERC-315: Withdraw LP collateral (position must be closed) */
-    readonly WithdrawLpCollateral: 46;
-    /** PERC-309: Queue a large LP withdrawal (user; creates withdraw_queue PDA). */
-    readonly QueueWithdrawal: 47;
-    /** PERC-309: Claim one epoch tranche from a queued LP withdrawal (user). */
-    readonly ClaimQueuedWithdrawal: 48;
-    /** PERC-309: Cancel a queued withdrawal, refund remaining LP tokens (user). */
-    readonly CancelQueuedWithdrawal: 49;
-    /** PERC-305: Auto-deleverage — surgically close profitable positions when PnL cap is exceeded (permissionless). */
-    readonly ExecuteAdl: 50;
-    /** Close a stale slab of an invalid/old layout and recover rent SOL (admin only). */
-    readonly CloseStaleSlabs: 51;
-    /** Reclaim rent from an uninitialised slab whose market creation failed mid-flow. Slab must sign. */
-    readonly ReclaimSlabRent: 52;
-    /** Permissionless on-chain audit crank: verifies conservation invariants and pauses market on violation. */
-    readonly AuditCrank: 53;
-    /** Cross-Market Portfolio Margining: SetOffsetPair */
-    readonly SetOffsetPair: 54;
-    /** Cross-Market Portfolio Margining: AttestCrossMargin */
-    readonly AttestCrossMargin: 55;
-    /** PERC-622: Advance oracle phase (permissionless crank) */
-    readonly AdvanceOraclePhase: 56;
-    /** PERC-629: Slash a market creator's deposit (permissionless) */
-    readonly SlashCreationDeposit: 58;
-    /** PERC-628: Initialize the global shared vault (admin) */
-    readonly InitSharedVault: 59;
-    /** PERC-628: Allocate virtual liquidity to a market (admin) */
-    readonly AllocateMarket: 60;
-    /** PERC-628: Queue a withdrawal for the current epoch */
-    readonly QueueWithdrawalSV: 61;
-    /** PERC-628: Claim a queued withdrawal after epoch elapses */
-    readonly ClaimEpochWithdrawal: 62;
-    /** PERC-628: Advance the shared vault epoch (permissionless crank) */
-    readonly AdvanceEpoch: 63;
-    /** PERC-608: Mint a Position NFT for a user's open position. */
-    readonly MintPositionNft: 64;
-    /** PERC-608: Transfer position ownership via the NFT (keeper-gated). */
-    readonly TransferPositionOwnership: 65;
-    /** PERC-608: Burn the Position NFT when a position is closed. */
-    readonly BurnPositionNft: 66;
-    /** PERC-608: Keeper sets pending_settlement flag before a funding transfer. */
-    readonly SetPendingSettlement: 67;
-    /** PERC-608: Keeper clears pending_settlement flag after KeeperCrank. */
-    readonly ClearPendingSettlement: 68;
-    /** PERC-608: Internal CPI call from percolator-nft TransferHook to update on-chain owner. */
-    readonly TransferOwnershipCpi: 69;
-    /** PERC-8111: Set per-wallet position cap (admin only, cap_e6=0 disables). */
-    readonly SetWalletCap: 70;
-    /** PERC-8110: Set OI imbalance hard-block threshold (admin only). */
-    readonly SetOiImbalanceHardBlock: 71;
-    /** PERC-8270: Rescue orphan vault — recover tokens from a closed market's vault (admin). */
-    readonly RescueOrphanVault: 72;
-    /** PERC-8270: Close orphan slab — reclaim rent from a slab whose market closed unexpectedly (admin). */
-    readonly CloseOrphanSlab: 73;
-    /** PERC-SetDexPool: Pin admin-approved DEX pool address for a HYPERP market (admin). */
-    readonly SetDexPool: 74;
-    /** CPI to the matcher program to initialize a matcher context account for an LP slot. Admin-only. */
-    readonly InitMatcherCtx: 75;
-    /** PauseMarket (tag 76): admin emergency pause. Blocks Trade/Deposit/Withdraw/InitUser. */
-    readonly PauseMarket: 76;
-    /** UnpauseMarket (tag 77): admin unpause. Re-enables all operations. */
-    readonly UnpauseMarket: 77;
-    /** PERC-305 / SECURITY(H-4): Set PnL cap for ADL pre-check (admin only). */
-    readonly SetMaxPnlCap: 78;
-    /** PERC-309: Set OI cap multiplier for LP withdrawal limits (admin only). Packed u64. */
-    readonly SetOiCapMultiplier: 79;
-    /** PERC-314: Set dispute params (window_slots + bond_amount, admin only). */
-    readonly SetDisputeParams: 80;
-    /** PERC-315: Set LP collateral params (enabled + ltv_bps, admin only). */
-    readonly SetLpCollateralParams: 81;
-    /** Phase E (2026-04-17): Accept a pending admin transfer. Signer must match pending_admin. */
-    readonly AcceptAdmin: 82;
+    readonly CloseResolved: 30;
     /**
-     * v12.18.x 4-way authority split (added 2026-04-22, wrapper 86ea41f).
-     * Unified mutator for admin/hyperp_mark/insurance/insurance_operator.
-     * Wrapper handler: src/percolator.rs:6876.
+     * UpdateAuthority (tag 32) — v17 wire: tag(1) + new_pubkey[32].
+     *
+     * BREAKING vs v12.18.x: NO kind byte in v17. The kind byte was removed;
+     * tag 32 now ONLY rotates the single marketauth key. Per-asset authority
+     * rotation uses tag 65 (UpdateAssetAuthority).
      */
-    readonly UpdateAuthority: 83;
+    readonly UpdateAuthority: 32;
+    readonly ConfigureHybridOracle: 34;
+    readonly ConfigureEwmaMark: 35;
+    readonly PushEwmaMark: 36;
+    readonly UpdateLiquidationFeePolicy: 37;
+    readonly ConfigurePermissionlessResolve: 38;
+    readonly ResolveStalePermissionless: 39;
+    readonly UpdateAssetLifecycle: 40;
+    readonly WithdrawInsurance: 41;
+    readonly CureAndCancelClose: 42;
+    readonly ForfeitRecoveryLeg: 43;
+    readonly RebalanceReduce: 44;
+    readonly FinalizeResetSide: 45;
+    readonly ClaimResolvedPayoutTopup: 46;
+    readonly RefineResolvedUnreceiptedBound: 47;
+    readonly SyncMaintenanceFee: 48;
+    readonly UpdateMaintenanceFeePolicy: 49;
+    readonly WithdrawBackingBucket: 50;
+    readonly UpdateBackingFeePolicy: 51;
+    readonly WithdrawBackingBucketEarnings: 52;
+    readonly SyncBackingDomainLedger: 53;
+    readonly SyncInsuranceLedger: 54;
+    readonly UpdateTradeFeePolicy: 55;
+    readonly TopUpInsuranceDomain: 56;
+    /**
+     * WithdrawInsuranceAsset (tag 57) — v17 wire: tag(1) + asset_index(u16) + amount(u128).
+     *
+     * Replaces the v12.x gap at tag 57. Withdraws from a specific asset's
+     * insurance fund. asset_index is u16 (domain u8→u16 migration).
+     */
+    readonly WithdrawInsuranceAsset: 57;
+    readonly UpdateFeeRedirectPolicy: 58;
+    readonly UpdateMarketInitFeePolicy: 59;
+    readonly UpdateBaseUnitMints: 60;
+    readonly SwapSecondaryForPrimary: 61;
+    readonly ConfigureAuthMark: 62;
+    readonly PushAuthMark: 63;
+    readonly ForceCloseAbandonedAsset: 64;
+    /**
+     * UpdateAssetAuthority (tag 65) — per-asset authority rotation.
+     *
+     * Wire: tag(1) + asset_index(u16) + kind(u8) + new_pubkey[32] = 36 bytes.
+     *
+     * kind values (matches v16_program.rs ASSET_AUTH_* constants):
+     *   0 = INSURANCE       — insurance_authority
+     *   1 = ASSET_ADMIN     — asset_admin (burnable when asset_index != 0)
+     *   2 = BACKING_BUCKET  — backing_bucket_authority
+     *   3 = ORACLE          — oracle_authority
+     *   4 = INSURANCE_OPERATOR — insurance_operator
+     *
+     * NOTE: The stake program uses kind=1 (ASSET_AUTH_INSURANCE=1 maps to the
+     * asset_admin route when targeting asset_index=0). See stake-program docs.
+     */
+    readonly UpdateAssetAuthority: 65;
+    /**
+     * BatchTradeNoCpi (tag 66) — multi-leg NoCpi trade in one instruction.
+     *
+     * Wire: tag(1) + n_legs(u8) + [asset_index(u16)+size_q(i128)+exec_price(u64)+fee_bps(u64)]×n
+     */
+    readonly BatchTradeNoCpi: 66;
+    /**
+     * BatchTradeCpi (tag 67) — multi-leg CPI trade in one instruction.
+     *
+     * Wire: tag(1) + n_legs(u8) + [asset_index(u16)+size_q(i128)+fee_bps(u64)+limit_price(u64)]×n
+     */
+    readonly BatchTradeCpi: 67;
+    /**
+     * SetMatcherConfig (tag 68) — enable/disable the matcher for this portfolio.
+     *
+     * Wire: tag(1) + enabled(u8) = 2 bytes.
+     */
+    readonly SetMatcherConfig: 68;
+    /**
+     * RestartAssetOracle (tag 69) — permissionless oracle restart after stale/stuck state.
+     *
+     * Wire: tag(1) + asset_index(u16) + now_slot(u64) + initial_price(u64) = 20 bytes.
+     */
+    readonly RestartAssetOracle: 69;
+    /**
+     * TransferPortfolioOwnership (tag 72) — B-3 position ownership transfer.
+     *
+     * Wire: tag(1) + new_owner[32] + asset_index(u16) = 35 bytes.
+     */
+    readonly TransferPortfolioOwnership: 72;
+    /**
+     * SetNftProgramId (tag 73) — register the percolator-nft program in the NftRegistry.
+     *
+     * Wire: tag(1) + nft_program_id[32] = 33 bytes.
+     */
+    readonly SetNftProgramId: 73;
+    /**
+     * CreateLpVault (tag 74).
+     * Wire: tag(1) + fee_share_bps(u16) + redemption_cooldown_slots(u64) +
+     *       oi_reservation_threshold_bps(u16) + domain(u16) = 14 bytes.
+     */
+    readonly CreateLpVault: 74;
+    /**
+     * DepositToLpVault (tag 75).
+     * Wire: tag(1) + amount(u128) = 17 bytes.
+     */
+    readonly DepositToLpVault: 75;
+    /**
+     * RequestRedeemLpShares (tag 76).
+     * Wire: tag(1) + shares(u128) = 17 bytes.
+     */
+    readonly RequestRedeemLpShares: 76;
+    /**
+     * ExecuteRedemption (tag 77).
+     * Wire: tag(1) = 1 byte.
+     */
+    readonly ExecuteRedemption: 77;
+    /**
+     * LpVaultCrankFees (tag 78).
+     * Wire: tag(1) = 1 byte.
+     */
+    readonly LpVaultCrankFees: 78;
+    /**
+     * SetLpVaultPaused (tag 79).
+     * Wire: tag(1) + paused(u8) = 2 bytes.
+     */
+    readonly SetLpVaultPaused: 79;
+    /**
+     * CloseLpVault (tag 80).
+     * Wire: tag(1) = 1 byte.
+     */
+    readonly CloseLpVault: 80;
+    /** @deprecated v12.x alias. Use DepositToLpVault(75) in v17. */
+    readonly LpVaultDeposit: 75;
+    /** @deprecated v12.x alias. Use RequestRedeemLpShares(76) in v17 — NOTE: wire format changed. */
+    readonly LpVaultWithdraw: 76;
+    /** @deprecated v12.x tag 14. Removed in v17. */
+    readonly UpdateConfig: 14;
+    /** @deprecated v12.x tag 15. Removed in v17. */
+    readonly SetMaintenanceFee: 15;
+    /** @deprecated v12.x tag 16. Removed in v17. */
+    readonly SetOraclePriceCap: 16;
+    /** @deprecated v12.x tag 17. Removed in v17. */
+    readonly AdminForceClose: 17;
+    /** @deprecated v12.x tag 18. Removed in v17. */
+    readonly UpdateRiskParams: 18;
+    /** @deprecated v12.x tag 20. Removed in v17. */
+    readonly SetPythOracle: 20;
+    /** @deprecated v12.x tag 21. Removed in v17. */
+    readonly RenounceAdmin: 21;
+    /** @deprecated v12.x tag 22. Removed in v17. */
+    readonly SetInsuranceWithdrawPolicy: 22;
+    /** @deprecated v12.x tag 23. Removed in v17 — v17 uses WithdrawInsuranceLimited=23 from toly. */
+    readonly WithdrawInsuranceLimited: 23;
+    /** @deprecated v12.x tag 25. Removed in v17. */
+    readonly FundMarketInsurance: 25;
+    /** @deprecated v12.x tag 26. Removed in v17. */
+    readonly SetInsuranceIsolation: 26;
+    /** @deprecated v12.x tag 27. Removed in v17. */
+    readonly DepositFeeCredits: 27;
+    /** @deprecated v12.x tag 29. Removed in v17 — v17 uses ResolveStalePermissionless=39. */
+    readonly ResolvePermissionless: 29;
+    /** @deprecated v12.x tag 30. Removed in v17 — v17 reuses 30 for CloseResolved (different wire). */
+    readonly ForceCloseResolved: 30;
+    /** @deprecated v12.x tag 33. Removed in v17. */
+    readonly UpdateInsurancePolicy: 33;
+    /** @deprecated v12.x tag 36. Removed in v12.17. */
+    readonly UnresolveMarket: 36;
+    /** @deprecated v12.x tag 43. Removed in v17 — v17 uses 43 for ChallengeSettlement (different wire). */
+    readonly ChallengeSettlement: 43;
+    /** @deprecated v12.x tag 44. Removed in v17 — v17 uses 44 for RebalanceReduce (different wire). */
+    readonly ResolveDispute: 44;
+    /** @deprecated v12.x tag 45. Removed in v17 — v17 uses 45 for FinalizeResetSide. */
+    readonly DepositLpCollateral: 45;
+    /** @deprecated v12.x tag 46. Removed in v17 — v17 uses 46 for ClaimResolvedPayoutTopup. */
+    readonly WithdrawLpCollateral: 46;
+    /** @deprecated v12.x tag 54. Removed in v17 — v17 uses 54 for SyncInsuranceLedger. */
+    readonly SetOffsetPair: 54;
+    /** @deprecated v12.x tag 55. Removed in v17 — v17 uses 55 for UpdateTradeFeePolicy. */
+    readonly AttestCrossMargin: 55;
+    /** @deprecated v12.x tag 56. Removed in v17 — v17 uses 56 for TopUpInsuranceDomain. */
+    readonly PauseMarket: 56;
+    /** @deprecated v12.x tag 58. Removed in v17 — v17 uses 58 for UpdateFeeRedirectPolicy. */
+    readonly UnpauseMarket: 58;
+    /** @deprecated v12.x tag 64. Removed in v17 — v17 uses 64 for ForceCloseAbandonedAsset. */
+    readonly MintPositionNft: 64;
+    /** @deprecated v12.x tag 65. COLLIDES with v17 UpdateAssetAuthority(65). Do NOT use. */
+    readonly TransferPositionOwnership: 65;
+    /** @deprecated v12.x tag 66. COLLIDES with v17 BatchTradeNoCpi(66). Do NOT use. */
+    readonly BurnPositionNft: 66;
+    /** @deprecated v12.x tag 67. COLLIDES with v17 BatchTradeCpi(67). Do NOT use. */
+    readonly SetPendingSettlement: 67;
+    /** @deprecated v12.x tag 68. COLLIDES with v17 SetMatcherConfig(68). Do NOT use. */
+    readonly ClearPendingSettlement: 68;
+    /** @deprecated v12.x tag 69. COLLIDES with v17 RestartAssetOracle(69). Do NOT use. */
+    readonly TransferOwnershipCpi: 69;
+    /** @deprecated v12.x tag 70. Not in v17. */
+    readonly SetWalletCap: 70;
+    /** @deprecated v12.x tag 71. Not in v17. */
+    readonly SetOiImbalanceHardBlock: 71;
+    /** @deprecated v12.x tag 72. COLLIDES with v17 TransferPortfolioOwnership(72). Do NOT use. */
+    readonly RescueOrphanVault: 72;
+    /** @deprecated v12.x tag 73. COLLIDES with v17 SetNftProgramId(73). Do NOT use. */
+    readonly CloseOrphanSlab: 73;
+    /** @deprecated v12.x tag 74. COLLIDES with v17 CreateLpVault(74). Do NOT use. */
+    readonly SetDexPool: 74;
+    /** @deprecated v12.x tag 75. COLLIDES with v17 DepositToLpVault(75). Do NOT use. */
+    readonly InitMatcherCtx: 75;
+    /** @deprecated v12.x tag 78. COLLIDES with v17 LpVaultCrankFees(78). Do NOT use. */
+    readonly SetMaxPnlCap: 78;
+    /** @deprecated v12.x tag 79. COLLIDES with v17 SetLpVaultPaused(79). Do NOT use. */
+    readonly SetOiCapMultiplier: 79;
+    /** @deprecated v12.x tag 80. COLLIDES with v17 CloseLpVault(80). Do NOT use. */
+    readonly SetDisputeParams: 80;
+    /** @deprecated v12.x tag 81. Not in v17. */
+    readonly SetLpCollateralParams: 81;
+    /** @deprecated v12.x tag 82. Not in v17. */
+    readonly AcceptAdmin: 82;
+    /** @deprecated v12.x tag 83. Not in v17 — v17 tag 32 UpdateAuthority has NO kind byte. */
+    readonly ProposeAdmin: 83;
+    /** @deprecated v12.x tag 85. Not in v17. */
+    readonly ReclaimEmptyAccount: 85;
+    /** @deprecated v12.x tag 86. Not in v17. */
+    readonly SettleAccount: 86;
+    /** @deprecated v12.x tag 90. Not in v17. */
+    readonly UpdateMarkPrice: 90;
+    /** @deprecated v12.x tag 91. Not in v17. */
+    readonly AuditCrank: 91;
+    /** @deprecated v12.x tag 92. Not in v17. */
+    readonly AdvanceOraclePhase: 92;
+    /** @deprecated v12.x tag 93. Not in v17. */
+    readonly SlashCreationDeposit: 93;
+    /** @deprecated v12.x tag 94. Not in v17. */
+    readonly InitSharedVault: 94;
+    /** @deprecated v12.x tag 95. Not in v17. */
+    readonly AllocateMarket: 95;
+    /** @deprecated v12.x tag 96. Not in v17. */
+    readonly QueueWithdrawalSV: 96;
+    /** @deprecated v12.x tag 97. Not in v17. */
+    readonly ClaimEpochWithdrawal: 97;
+    /** @deprecated v12.x tag 98. Not in v17. */
+    readonly AdvanceEpoch: 98;
+    /** @deprecated v12.x tag 99. Not in v17. */
+    readonly ReclaimSlabRent: 99;
+    /** @deprecated v12.x tag 100. Not in v17. */
+    readonly CloseStaleSlabs: 100;
+    /** @deprecated v12.x tag 101. Not in v17. */
+    readonly ExecuteAdl: 101;
+    /** @deprecated v12.x tag 102. Not in v17. */
+    readonly QueueWithdrawal: 102;
+    /** @deprecated v12.x tag 103. Not in v17. */
+    readonly ClaimQueuedWithdrawal: 103;
+    /** @deprecated v12.x tag 104. Not in v17. */
+    readonly CancelQueuedWithdrawal: 104;
+    /** @deprecated v12.x tag 105. Not in v17. */
+    readonly TradeCpiV: 105;
 };
+/**
+ * v17 slab version discriminator. Stored as u16 LE at byte offset 8 of every
+ * percolator-owned account (market-group, portfolio, insurance-ledger, etc.).
+ *
+ * The v17 MAGIC is 0x5045_5243_5631_3600n ("PERCV16\0" as u64 LE). When
+ * reading an account header, verify both MAGIC at [0..8] and VERSION at [8..10].
+ */
+export declare const EXPECTED_SLAB_VERSION = 16;
+/**
+ * v17 account header magic — "PERCV16\0" stored as little-endian u64.
+ * bytes[0..8] = [0x00, 0x36, 0x31, 0x56, 0x43, 0x52, 0x45, 0x50]
+ */
+export declare const V17_SLAB_MAGIC = 5784119745589622272n;
 /**
  * InitMarket instruction data (256 bytes total)
  * Layout: tag(1) + admin(32) + mint(32) + indexFeedId(32) +
@@ -311,50 +505,97 @@ export interface WithdrawCollateralArgs {
 }
 export declare function encodeWithdrawCollateral(args: WithdrawCollateralArgs): Uint8Array;
 /**
- * Liquidation policy for KeeperCrank candidates (v12.17 two-phase crank).
+ * PermissionlessCrank (tag 5) action byte values.
  *
- * On-chain wire tags:
- *   0x00 = FullClose — liquidate the entire position
- *   0x01 = ExactPartial(u128) — reduce position by exactly `quantity` units
- *   0xFF = TouchOnly — accrue fees / sweep dust, do NOT liquidate
+ * Source: v16_program.rs Instruction::PermissionlessCrank handler.
+ *   0 = FeeSweep  — accrue fees + dust sweep (no liquidation)
+ *   1 = Liquidate — liquidate the portfolio identified by asset_index
  */
-export declare const LiquidationPolicyTag: {
-    readonly FullClose: 0;
-    readonly ExactPartial: 1;
-    readonly TouchOnly: 255;
-};
-export type KeeperCrankCandidate = {
-    policy: typeof LiquidationPolicyTag.FullClose;
-    idx: number;
-} | {
-    policy: typeof LiquidationPolicyTag.ExactPartial;
-    idx: number;
-    quantity: bigint | string;
-} | {
-    policy: typeof LiquidationPolicyTag.TouchOnly;
-    idx: number;
+export declare const CrankAction: {
+    readonly FeeSweep: 0;
+    readonly Liquidate: 1;
 };
 /**
- * KeeperCrank instruction data (v12.17 two-phase crank).
+ * PermissionlessCrank (tag 5) instruction args.
  *
- * Wire format: tag(1) + caller_idx(u16) + format_version=1(u8) +
- *   candidates: [ idx(u16) + policy_tag(u8) [+ quantity(u128) if ExactPartial] ]*
+ * v17 wire: tag(1) + action(u8) + asset_index(u16) + now_slot(u64) +
+ *   funding_rate_e9(i128 HARDCODED=0) + close_q(u128) + fee_bps(u64) +
+ *   recovery_reason(u8) = 47 bytes.
  *
- * Empty candidates list = simple crank (accrue funding, sweep dust).
- * With candidates = targeted liquidation/touch pass.
+ * CRITICAL: funding_rate_e9 is always hardcoded to 0n by this encoder.
+ * The program hard-rejects any nonzero value with InvalidInstructionData.
+ * Do NOT construct this payload manually and omit funding_rate_e9 — that
+ * produces a truncated instruction (missing 16 bytes).
+ *
+ * @param action       CrankAction.FeeSweep or CrankAction.Liquidate.
+ * @param assetIndex   Asset/domain index to operate on.
+ * @param nowSlot      Current slot (for crank freshness check).
+ * @param closeQ       Quantity to close (0 for FeeSweep).
+ * @param feeBps       Fee in basis points.
+ * @param recoveryReason Recovery reason byte (0 for normal operations).
+ *
+ * @example
+ * ```ts
+ * // Simple fee-sweep crank
+ * const data = encodePermissionlessCrank({
+ *   action: CrankAction.FeeSweep,
+ *   assetIndex: 0,
+ *   nowSlot: currentSlot,
+ *   closeQ: 0n,
+ *   feeBps: 0n,
+ *   recoveryReason: 0,
+ * });
+ * ```
+ */
+export interface PermissionlessCrankArgs {
+    action: number;
+    assetIndex: number;
+    nowSlot: bigint | string;
+    closeQ: bigint | string;
+    feeBps: bigint | string;
+    recoveryReason: number;
+}
+export declare function encodePermissionlessCrank(args: PermissionlessCrankArgs): Uint8Array;
+/**
+ * @deprecated v12.17 KeeperCrank wire format is not accepted by v17.
+ * Use encodePermissionlessCrank() instead.
+ *
+ * Retained for source-compat only. Will throw to prevent silent misuse.
  */
 export interface KeeperCrankArgs {
     callerIdx: number;
-    candidates?: KeeperCrankCandidate[];
+    candidates?: unknown[];
 }
-export declare function encodeKeeperCrank(args: KeeperCrankArgs): Uint8Array;
+export declare function encodeKeeperCrank(_args: KeeperCrankArgs): Uint8Array;
 /**
- * TradeNoCpi instruction data (21 bytes)
+ * TradeNoCpi instruction data (v17 wire format).
+ *
+ * v17 wire: tag(1) + asset_index(u16) + size_q(i128) + exec_price(u64) + fee_bps(u64)
+ *   = 28 bytes.
+ *
+ * BREAKING vs v12.x: payload fields changed completely. v12 had lpIdx+userIdx+size;
+ * v17 has asset_index+size_q+exec_price+fee_bps.
+ *
+ * @param assetIndex Asset/domain index.
+ * @param sizeQ      Trade quantity (signed; positive=long, negative=short).
+ * @param execPrice  Execution price in e6 units.
+ * @param feeBps     Fee in basis points.
+ *
+ * @example
+ * ```ts
+ * const data = encodeTradeNoCpi({
+ *   assetIndex: 0,
+ *   sizeQ: 1_000_000n,
+ *   execPrice: 50_000_000_000n,
+ *   feeBps: 30n,
+ * });
+ * ```
  */
 export interface TradeNoCpiArgs {
-    lpIdx: number;
-    userIdx: number;
-    size: bigint | string;
+    assetIndex: number;
+    sizeQ: bigint | string;
+    execPrice: bigint | string;
+    feeBps: bigint | string;
 }
 export declare function encodeTradeNoCpi(args: TradeNoCpiArgs): Uint8Array;
 /**
@@ -379,19 +620,37 @@ export interface TopUpInsuranceArgs {
 }
 export declare function encodeTopUpInsurance(args: TopUpInsuranceArgs): Uint8Array;
 /**
- * TradeCpi instruction data (29 bytes)
+ * TradeCpi instruction data (v17 wire format).
  *
- * v12.17: limit_price_e6 is now REQUIRED (slippage protection).
- * Set to 0 to accept any price (no slippage protection).
- * For buys: tx reverts if execution price > limitPriceE6.
- * For sells: tx reverts if execution price < limitPriceE6.
+ * v17 wire: tag(1) + asset_index(u16) + size_q(i128) + fee_bps(u64) + limit_price(u64)
+ *   = 28 bytes.
+ *
+ * BREAKING vs v12.x: payload fields changed. v12 had lpIdx+userIdx+size+limitPriceE6;
+ * v17 has asset_index+size_q+fee_bps+limit_price.
+ *
+ * @param assetIndex Asset/domain index.
+ * @param sizeQ      Trade quantity (signed).
+ * @param feeBps     Fee in basis points.
+ * @param limitPrice Limit price in e6 units. 0 = no limit (accept any price).
+ *                   Buys: reject if exec_price > limit_price.
+ *                   Sells: reject if exec_price < limit_price.
+ *
+ * @example
+ * ```ts
+ * const data = encodeTradeCpi({
+ *   assetIndex: 0,
+ *   sizeQ: 1_000_000n,
+ *   feeBps: 30n,
+ *   limitPrice: 51_000_000_000n,  // max price for a buy
+ * });
+ * ```
  */
 export interface TradeCpiArgs {
-    lpIdx: number;
-    userIdx: number;
-    size: bigint | string;
-    /** Limit price in e6 units. 0 = no limit (accept any price). */
-    limitPriceE6: bigint | string;
+    assetIndex: number;
+    sizeQ: bigint | string;
+    feeBps: bigint | string;
+    /** Limit price in e6 units. 0 = no limit. */
+    limitPrice: bigint | string;
 }
 export declare function encodeTradeCpi(args: TradeCpiArgs): Uint8Array;
 /**
@@ -453,7 +712,8 @@ export interface UpdateConfigArgs {
      */
     tvlInsuranceCapMult?: number;
 }
-export declare function encodeUpdateConfig(args: UpdateConfigArgs): Uint8Array;
+/** @deprecated v12.x UpdateConfig (old tag 14). Not in v17. */
+export declare function encodeUpdateConfig(_args: UpdateConfigArgs): Uint8Array;
 /**
  * @deprecated Tag 15 removed in v12.17. Maintenance fee is set at InitMarket only.
  * Sending this instruction will fail with InvalidInstructionData.
@@ -480,7 +740,8 @@ export declare function encodeSetMaintenanceFee(_args: SetMaintenanceFeeArgs): U
 export interface SetOraclePriceCapArgs {
     maxChangeE2bps: bigint | string;
 }
-export declare function encodeSetOraclePriceCap(args: SetOraclePriceCapArgs): Uint8Array;
+/** @deprecated v12.x SetOraclePriceCap (old tag 16). Not in v17. */
+export declare function encodeSetOraclePriceCap(_args: SetOraclePriceCapArgs): Uint8Array;
 /**
  * ResolveMode for ResolveMarket — wrapper expects this byte explicitly per
  * upstream a7186d5 / PORT-1 / KL-WIRE-FORMAT-DIVERGENCE-2:
@@ -517,7 +778,8 @@ export declare function encodeWithdrawInsurance(): Uint8Array;
 export interface AdminForceCloseArgs {
     targetIdx: number;
 }
-export declare function encodeAdminForceClose(args: AdminForceCloseArgs): Uint8Array;
+/** @deprecated v12.x AdminForceClose (old tag 17). Not in v17. */
+export declare function encodeAdminForceClose(_args: AdminForceCloseArgs): Uint8Array;
 /**
  * @deprecated Tag 22 is now SetInsuranceWithdrawPolicy in v12.17.
  * This encoder sends the WRONG wire format (u64+u64 instead of pubkey+u64+u16+u64).
@@ -589,15 +851,17 @@ export interface LpVaultWithdrawArgs {
     /** Amount of LP vault tokens to burn. */
     lpAmount: bigint | string;
 }
-export declare function encodeLpVaultWithdraw(args: LpVaultWithdrawArgs): Uint8Array;
 /**
- * PauseMarket instruction data (1 byte)
- * Pauses the market — disables trading, deposits, and withdrawals.
+ * @deprecated v12.x LpVaultWithdraw (tag 39 in v12, now alias 76=RequestRedeemLpShares in v17).
+ * v17 uses a 2-step request/execute redemption flow — see encodeRequestRedeemLpShares.
+ */
+export declare function encodeLpVaultWithdraw(_args: LpVaultWithdrawArgs): Uint8Array;
+/**
+ * @deprecated v12.x PauseMarket (old tag 56). v17 reuses tag 56 for TopUpInsuranceDomain.
  */
 export declare function encodePauseMarket(): Uint8Array;
 /**
- * UnpauseMarket instruction data (1 byte)
- * Unpauses the market — re-enables trading, deposits, and withdrawals.
+ * @deprecated v12.x UnpauseMarket (old tag 58). v17 reuses tag 58 for UpdateFeeRedirectPolicy.
  */
 export declare function encodeUnpauseMarket(): Uint8Array;
 /**
@@ -654,10 +918,9 @@ export declare function computeEmaMarkPrice(markPrevE6: bigint, oracleE6: bigint
  */
 export declare function encodeUpdateHyperpMark(): Uint8Array;
 /**
- * Fund per-market isolated insurance balance.
- * Accounts: [admin(signer,writable), slab(writable), admin_ata(writable), vault(writable), token_program]
+ * @deprecated v12.x FundMarketInsurance (old tag 25). Not in v17.
  */
-export declare function encodeFundMarketInsurance(args: {
+export declare function encodeFundMarketInsurance(_args: {
     amount: bigint;
 }): Uint8Array;
 /**
@@ -682,7 +945,8 @@ export declare function encodeSetInsuranceIsolation(args: {
  * const data = encodeQueueWithdrawal({ lpAmount: 1_000_000_000n });
  * ```
  */
-export declare function encodeQueueWithdrawal(args: {
+/** @deprecated v12.x QueueWithdrawal (old tag 102). Not in v17. */
+export declare function encodeQueueWithdrawal(_args: {
     lpAmount: bigint | string;
 }): Uint8Array;
 /**
@@ -695,6 +959,7 @@ export declare function encodeQueueWithdrawal(args: {
  *            lpVaultMint(writable), userLpAta(writable), vault(writable),
  *            userAta(writable), vaultAuthority, tokenProgram, lpVaultState(writable)]
  */
+/** @deprecated v12.x ClaimQueuedWithdrawal (old tag 103). Not in v17. */
 export declare function encodeClaimQueuedWithdrawal(): Uint8Array;
 /**
  * CancelQueuedWithdrawal (Tag 49, PERC-309) — cancel a queued withdrawal, refund remaining LP.
@@ -705,6 +970,7 @@ export declare function encodeClaimQueuedWithdrawal(): Uint8Array;
  *
  * Accounts: [user(signer,writable), slab, withdrawQueue(writable)]
  */
+/** @deprecated v12.x CancelQueuedWithdrawal (old tag 104). Not in v17. */
 export declare function encodeCancelQueuedWithdrawal(): Uint8Array;
 /**
  * ExecuteAdl (Tag 50, PERC-305) — auto-deleverage the most profitable position.
@@ -727,7 +993,8 @@ export declare function encodeCancelQueuedWithdrawal(): Uint8Array;
 export interface ExecuteAdlArgs {
     targetIdx: number;
 }
-export declare function encodeExecuteAdl(args: ExecuteAdlArgs): Uint8Array;
+/** @deprecated v12.x ExecuteAdl (old tag 101). Not in v17. */
+export declare function encodeExecuteAdl(_args: ExecuteAdlArgs): Uint8Array;
 /**
  * CloseStaleSlabs (Tag 51) — close a slab of an invalid/old layout and recover rent SOL.
  *
@@ -737,6 +1004,7 @@ export declare function encodeExecuteAdl(args: ExecuteAdlArgs): Uint8Array;
  *
  * Accounts: [dest(signer,writable), slab(writable)]
  */
+/** @deprecated v12.x CloseStaleSlabs (old tag 100). Not in v17. */
 export declare function encodeCloseStaleSlabs(): Uint8Array;
 /**
  * ReclaimSlabRent (Tag 52) — reclaim rent from an uninitialised slab.
@@ -747,6 +1015,7 @@ export declare function encodeCloseStaleSlabs(): Uint8Array;
  *
  * Accounts: [dest(signer,writable), slab(signer,writable)]
  */
+/** @deprecated v12.x ReclaimSlabRent (old tag 99). Not in v17. */
 export declare function encodeReclaimSlabRent(): Uint8Array;
 /**
  * AuditCrank (Tag 53) — verify conservation invariants on-chain (permissionless).
@@ -762,6 +1031,7 @@ export declare function encodeReclaimSlabRent(): Uint8Array;
  * const data = encodeAuditCrank();
  * ```
  */
+/** @deprecated v12.x AuditCrank (old tag 91). Not in v17. */
 export declare function encodeAuditCrank(): Uint8Array;
 /**
  * Parsed vAMM matcher parameters (from on-chain matcher context account)
@@ -815,6 +1085,7 @@ export declare function computeVammQuote(params: VammMatcherParams, oraclePriceE
  * Accounts:
  *   0. [writable] Slab
  */
+/** @deprecated v12.x AdvanceOraclePhase (old tag 92). Not in v17. */
 export declare function encodeAdvanceOraclePhase(): Uint8Array;
 /** Oracle phase constants matching on-chain values */
 export declare const ORACLE_PHASE_NASCENT = 0;
@@ -866,7 +1137,8 @@ export interface InitSharedVaultArgs {
     epochDurationSlots: bigint | string;
     maxMarketExposureBps: number;
 }
-export declare function encodeInitSharedVault(args: InitSharedVaultArgs): Uint8Array;
+/** @deprecated v12.x InitSharedVault (old tag 94). Not in v17. */
+export declare function encodeInitSharedVault(_args: InitSharedVaultArgs): Uint8Array;
 /**
  * AllocateMarket (Tag 60) — admin: allocate virtual liquidity from the shared vault
  * to a market (PERC-628).
@@ -883,7 +1155,8 @@ export declare function encodeInitSharedVault(args: InitSharedVaultArgs): Uint8A
 export interface AllocateMarketArgs {
     amount: bigint | string;
 }
-export declare function encodeAllocateMarket(args: AllocateMarketArgs): Uint8Array;
+/** @deprecated v12.x AllocateMarket (old tag 95). Not in v17. */
+export declare function encodeAllocateMarket(_args: AllocateMarketArgs): Uint8Array;
 /**
  * QueueWithdrawalSV (Tag 61) — user: queue a withdrawal request for the current
  * epoch (PERC-628). Tokens are locked until the epoch elapses.
@@ -899,7 +1172,8 @@ export declare function encodeAllocateMarket(args: AllocateMarketArgs): Uint8Arr
 export interface QueueWithdrawalSVArgs {
     lpAmount: bigint | string;
 }
-export declare function encodeQueueWithdrawalSV(args: QueueWithdrawalSVArgs): Uint8Array;
+/** @deprecated v12.x QueueWithdrawalSV (old tag 96). Not in v17. */
+export declare function encodeQueueWithdrawalSV(_args: QueueWithdrawalSVArgs): Uint8Array;
 /**
  * ClaimEpochWithdrawal (Tag 62) — user: claim a queued withdrawal after the epoch
  * has elapsed (PERC-628). Receives pro-rata collateral from the vault.
@@ -916,6 +1190,7 @@ export declare function encodeQueueWithdrawalSV(args: QueueWithdrawalSVArgs): Ui
  *   6. []                 Vault authority
  *   7. []                 Token program
  */
+/** @deprecated v12.x ClaimEpochWithdrawal (old tag 97). Not in v17. */
 export declare function encodeClaimEpochWithdrawal(): Uint8Array;
 /**
  * AdvanceEpoch (Tag 63) — permissionless crank: move the shared vault to the next
@@ -927,6 +1202,7 @@ export declare function encodeClaimEpochWithdrawal(): Uint8Array;
  *   0. [signer]           Caller (anyone)
  *   1. [writable]         Shared vault PDA
  */
+/** @deprecated v12.x AdvanceEpoch (old tag 98). Not in v17. */
 export declare function encodeAdvanceEpoch(): Uint8Array;
 /**
  * SetOiImbalanceHardBlock (Tag 71, PERC-8110) — set OI imbalance hard-block threshold (admin only).
@@ -953,7 +1229,8 @@ export declare function encodeAdvanceEpoch(): Uint8Array;
  * });
  * ```
  */
-export declare function encodeSetOiImbalanceHardBlock(args: {
+/** @deprecated v12.x SetOiImbalanceHardBlock (old tag 71). Not in v17. */
+export declare function encodeSetOiImbalanceHardBlock(_args: {
     thresholdBps: number;
 }): Uint8Array;
 /**
@@ -984,7 +1261,12 @@ export declare function encodeSetOiImbalanceHardBlock(args: {
 export interface MintPositionNftArgs {
     userIdx: number;
 }
-export declare function encodeMintPositionNft(args: MintPositionNftArgs): Uint8Array;
+/**
+ * @deprecated v12.x MintPositionNft (old tag 64). v17 reuses tag 64 for ForceCloseAbandonedAsset.
+ * NFT operations in v17 use the standalone percolator-nft program; use SetNftProgramId(73)
+ * to register it and TransferPortfolioOwnership(72) for B-3 transfers.
+ */
+export declare function encodeMintPositionNft(_args: MintPositionNftArgs): Uint8Array;
 /**
  * TransferPositionOwnership (Tag 65, PERC-608) — transfer an open position to a new owner.
  *
@@ -1006,7 +1288,11 @@ export declare function encodeMintPositionNft(args: MintPositionNftArgs): Uint8A
 export interface TransferPositionOwnershipArgs {
     userIdx: number;
 }
-export declare function encodeTransferPositionOwnership(args: TransferPositionOwnershipArgs): Uint8Array;
+/**
+ * @deprecated v12.x TransferPositionOwnership (old tag 65). v17 reuses tag 65 for UpdateAssetAuthority.
+ * Use encodeTransferPortfolioOwnership() (tag 72) for B-3 ownership transfer in v17.
+ */
+export declare function encodeTransferPositionOwnership(_args: TransferPositionOwnershipArgs): Uint8Array;
 /**
  * BurnPositionNft (Tag 66, PERC-608) — burn the Position NFT when a position is closed.
  *
@@ -1027,7 +1313,11 @@ export declare function encodeTransferPositionOwnership(args: TransferPositionOw
 export interface BurnPositionNftArgs {
     userIdx: number;
 }
-export declare function encodeBurnPositionNft(args: BurnPositionNftArgs): Uint8Array;
+/**
+ * @deprecated v12.x BurnPositionNft (old tag 66). v17 reuses tag 66 for BatchTradeNoCpi.
+ * NFT burn is handled by the standalone percolator-nft program in v17.
+ */
+export declare function encodeBurnPositionNft(_args: BurnPositionNftArgs): Uint8Array;
 /**
  * SetPendingSettlement (Tag 67, PERC-608) — keeper sets the pending_settlement flag.
  *
@@ -1045,7 +1335,10 @@ export declare function encodeBurnPositionNft(args: BurnPositionNftArgs): Uint8A
 export interface SetPendingSettlementArgs {
     userIdx: number;
 }
-export declare function encodeSetPendingSettlement(args: SetPendingSettlementArgs): Uint8Array;
+/**
+ * @deprecated v12.x SetPendingSettlement (old tag 67). v17 reuses tag 67 for BatchTradeCpi.
+ */
+export declare function encodeSetPendingSettlement(_args: SetPendingSettlementArgs): Uint8Array;
 /**
  * ClearPendingSettlement (Tag 68, PERC-608) — keeper clears the pending_settlement flag.
  *
@@ -1062,7 +1355,10 @@ export declare function encodeSetPendingSettlement(args: SetPendingSettlementArg
 export interface ClearPendingSettlementArgs {
     userIdx: number;
 }
-export declare function encodeClearPendingSettlement(args: ClearPendingSettlementArgs): Uint8Array;
+/**
+ * @deprecated v12.x ClearPendingSettlement (old tag 68). v17 reuses tag 68 for SetMatcherConfig.
+ */
+export declare function encodeClearPendingSettlement(_args: ClearPendingSettlementArgs): Uint8Array;
 /**
  * TransferOwnershipCpi (Tag 69, PERC-608) — internal CPI target for percolator-nft TransferHook.
  *
@@ -1081,7 +1377,10 @@ export interface TransferOwnershipCpiArgs {
     userIdx: number;
     newOwner: PublicKey | string;
 }
-export declare function encodeTransferOwnershipCpi(args: TransferOwnershipCpiArgs): Uint8Array;
+/**
+ * @deprecated v12.x TransferOwnershipCpi (old tag 69). v17 reuses tag 69 for RestartAssetOracle.
+ */
+export declare function encodeTransferOwnershipCpi(_args: TransferOwnershipCpiArgs): Uint8Array;
 /**
  * SetWalletCap (Tag 70, PERC-8111) — set the per-wallet position cap (admin only).
  *
@@ -1122,7 +1421,8 @@ export interface SetWalletCapArgs {
     /** Max position size in e6 units. 0 = disabled. $1 = 1_000_000n, $1K = 1_000_000_000n. */
     capE6: bigint | string;
 }
-export declare function encodeSetWalletCap(args: SetWalletCapArgs): Uint8Array;
+/** @deprecated v12.x SetWalletCap (old tag 70). Not in v17. */
+export declare function encodeSetWalletCap(_args: SetWalletCapArgs): Uint8Array;
 /**
  * InitMatcherCtx (Tag 75) — admin initializes the matcher context account for an LP slot.
  *
@@ -1166,210 +1466,157 @@ export interface InitMatcherCtxArgs {
     /** Skew spread multiplier in bps (0 = disabled). */
     skewSpreadMultBps: number;
 }
-export declare function encodeInitMatcherCtx(args: InitMatcherCtxArgs): Uint8Array;
-/** SetInsuranceWithdrawPolicy (tag 22): authority + min_withdraw_base + max_withdraw_bps + cooldown_slots */
+/** @deprecated v12.x InitMatcherCtx (old tag 75). v17 reuses tag 75 for DepositToLpVault. */
+export declare function encodeInitMatcherCtx(_args: InitMatcherCtxArgs): Uint8Array;
+/**
+ * @deprecated v12.x SetInsuranceWithdrawPolicy (old tag 22). Not in v17.
+ */
 export interface SetInsuranceWithdrawPolicyArgs {
     authority: PublicKey | string;
     minWithdrawBase: bigint | string;
     maxWithdrawBps: number;
     cooldownSlots: bigint | string;
 }
-export declare function encodeSetInsuranceWithdrawPolicy(args: SetInsuranceWithdrawPolicyArgs): Uint8Array;
+export declare function encodeSetInsuranceWithdrawPolicy(_args: SetInsuranceWithdrawPolicyArgs): Uint8Array;
 /**
- * WithdrawInsuranceLimited (tag 23): amount.
- * Account count is 7 (resolved markets) or 8 (live markets — oracle required
- * for same-instruction accrue_market_to per upstream 8ce8d54).
- * See ACCOUNTS_WITHDRAW_INSURANCE_LIMITED_LIVE / _RESOLVED in accounts.ts.
+ * @deprecated v12.x WithdrawInsuranceLimited (old tag 23). v17 uses tag 23 for WithdrawInsuranceLimited (same tag, different meaning — verify wire before using).
  */
-export declare function encodeWithdrawInsuranceLimited(args: {
+export declare function encodeWithdrawInsuranceLimited(_args: {
     amount: bigint | string;
 }): Uint8Array;
-/** ResolvePermissionless (tag 29): no args */
+/**
+ * @deprecated v12.x ResolvePermissionless (old tag 29). v17 uses tag 39 for ResolveStalePermissionless.
+ */
 export declare function encodeResolvePermissionless(): Uint8Array;
-/** ForceCloseResolved (tag 30): user_idx */
-export declare function encodeForceCloseResolved(args: {
+/**
+ * @deprecated v12.x ForceCloseResolved (old tag 30) is NOT CloseResolved in v17.
+ * v17 reuses tag 30 for CloseResolved with a completely different wire format.
+ * This function throws at runtime to prevent silent on-chain mismatch.
+ */
+export declare function encodeForceCloseResolved(_args: {
     userIdx: number;
 }): Uint8Array;
-/** CreateLpVault (tag 37): fee_share_bps + util_curve_enabled */
+/**
+ * @deprecated v12.x CreateLpVault wire format. Use encodeCreateLpVaultV17() for v17.
+ * This is kept for source-compat only — the v12 wire format will be rejected by v17.
+ */
 export declare function encodeCreateLpVault(args: {
     feeShareBps: bigint | string;
     utilCurveEnabled?: boolean;
 }): Uint8Array;
-/** LpVaultDeposit (tag 38): amount */
-export declare function encodeLpVaultDeposit(args: {
+/**
+ * @deprecated v12.x LpVaultDeposit wire format. Use encodeDepositToLpVault() for v17.
+ * This is kept for source-compat only — the v12 wire format will be rejected by v17.
+ */
+export declare function encodeLpVaultDeposit(_args: {
     amount: bigint | string;
 }): Uint8Array;
-/** LpVaultCrankFees (tag 40): no args */
-export declare function encodeLpVaultCrankFees(): Uint8Array;
-/** ChallengeSettlement (tag 43): proposed_price_e6 */
-export declare function encodeChallengeSettlement(args: {
+/**
+ * @deprecated v12.x ChallengeSettlement. v17 reuses tag 43 for ForfeitRecoveryLeg.
+ */
+export declare function encodeChallengeSettlement(_args: {
     proposedPriceE6: bigint | string;
 }): Uint8Array;
-/** ResolveDispute (tag 44): accept (0 = reject, 1 = accept) */
-export declare function encodeResolveDispute(args: {
+/** @deprecated v12.x ResolveDispute. v17 reuses tag 44 for RebalanceReduce. */
+export declare function encodeResolveDispute(_args: {
     accept: number;
 }): Uint8Array;
-/** DepositLpCollateral (tag 45): user_idx + lp_amount */
-export declare function encodeDepositLpCollateral(args: {
+/** @deprecated v12.x DepositLpCollateral. v17 reuses tag 45 for FinalizeResetSide. */
+export declare function encodeDepositLpCollateral(_args: {
     userIdx: number;
     lpAmount: bigint | string;
 }): Uint8Array;
-/** WithdrawLpCollateral (tag 46): user_idx + lp_amount */
-export declare function encodeWithdrawLpCollateral(args: {
+/** @deprecated v12.x WithdrawLpCollateral. v17 reuses tag 46 for ClaimResolvedPayoutTopup. */
+export declare function encodeWithdrawLpCollateral(_args: {
     userIdx: number;
     lpAmount: bigint | string;
 }): Uint8Array;
-/** SetOffsetPair (tag 54): offset_bps */
-export declare function encodeSetOffsetPair(args: {
+/** @deprecated v12.x SetOffsetPair. v17 reuses tag 54 for SyncInsuranceLedger. */
+export declare function encodeSetOffsetPair(_args: {
     offsetBps: number;
 }): Uint8Array;
-/** AttestCrossMargin (tag 55): user_idx_a + user_idx_b */
-export declare function encodeAttestCrossMargin(args: {
+/** @deprecated v12.x AttestCrossMargin. v17 reuses tag 55 for UpdateTradeFeePolicy. */
+export declare function encodeAttestCrossMargin(_args: {
     userIdxA: number;
     userIdxB: number;
 }): Uint8Array;
-/** RescueOrphanVault (tag 72): no args */
+/** @deprecated v12.x RescueOrphanVault. v17 reuses tag 72 for TransferPortfolioOwnership. */
 export declare function encodeRescueOrphanVault(): Uint8Array;
-/** CloseOrphanSlab (tag 73): no args */
+/** @deprecated v12.x CloseOrphanSlab. v17 reuses tag 73 for SetNftProgramId. */
 export declare function encodeCloseOrphanSlab(): Uint8Array;
-/** SetDexPool (tag 74): pool pubkey */
-export declare function encodeSetDexPool(args: {
+/** @deprecated v12.x SetDexPool. v17 reuses tag 74 for CreateLpVault. */
+export declare function encodeSetDexPool(_args: {
     pool: PublicKey | string;
 }): Uint8Array;
-/** CreateInsuranceMint: creates the insurance LP mint PDA (tag 37, same as CreateLpVault) */
+/** @deprecated v12.x Insurance LP alias — removed in v17. */
 export declare function encodeCreateInsuranceMint(): Uint8Array;
-/** DepositInsuranceLP: deposit collateral, receive LP tokens (tag 38, same as LpVaultDeposit) */
-export declare function encodeDepositInsuranceLP(args: {
+/** @deprecated v12.x Insurance LP alias — removed in v17. */
+export declare function encodeDepositInsuranceLP(_args: {
     amount: bigint | string;
 }): Uint8Array;
-/** WithdrawInsuranceLP: burn LP tokens, withdraw collateral (tag 39, same as LpVaultWithdraw) */
-export declare function encodeWithdrawInsuranceLP(args: {
+/** @deprecated v12.x Insurance LP alias — removed in v17. */
+export declare function encodeWithdrawInsuranceLP(_args: {
     lpAmount: bigint | string;
 }): Uint8Array;
 /**
- * SetMaxPnlCap (Tag 78, PERC-305 / SECURITY(H-4)) — set the PnL cap for ADL
- * pre-check (admin only). When `pnl_pos_tot <= max_pnl_cap`, ADL returns
- * early (no deleveraging needed).
- *
- * `capE6 = 0` disables the cap (ADL always runs when insurance is depleted).
- *
- * Instruction data: tag(1) + cap(u64, 8) = 9 bytes
+ * @deprecated v12.x SetMaxPnlCap (old tag 78). v17 reuses tag 78 for LpVaultCrankFees.
+ * This function throws at runtime to prevent silent on-chain mismatch.
  */
 export interface SetMaxPnlCapArgs {
-    /** PnL cap in engine quote units (e.g., 1_000_000 = $1 e6). 0 = cap disabled. */
     cap: bigint | string;
 }
-export declare function encodeSetMaxPnlCap(args: SetMaxPnlCapArgs): Uint8Array;
+export declare function encodeSetMaxPnlCap(_args: SetMaxPnlCapArgs): Uint8Array;
 /**
- * SetOiCapMultiplier (Tag 79, PERC-309) — set the OI cap multiplier for LP
- * withdrawal limits (admin only). Packed u64:
- *   lo 32 bits: multiplier_bps (e.g., 15000 = 1.5× soft cap in stressed state)
- *   hi 32 bits: soft_cap_bps   (e.g., 8000  = 80% base cap)
- *
- * `packed = 0` disables enforcement (no cap on LP withdrawals).
- *
- * Instruction data: tag(1) + packed(u64, 8) = 9 bytes
+ * @deprecated v12.x SetOiCapMultiplier (old tag 79). v17 reuses tag 79 for SetLpVaultPaused.
  */
 export interface SetOiCapMultiplierArgs {
-    /** Packed u64: lo32 = multiplier_bps, hi32 = soft_cap_bps. 0 = disabled. */
     packed: bigint | string;
 }
-export declare function encodeSetOiCapMultiplier(args: SetOiCapMultiplierArgs): Uint8Array;
-/** Convenience: pack (multiplier_bps, soft_cap_bps) into the u64 expected by SetOiCapMultiplier. */
+export declare function encodeSetOiCapMultiplier(_args: SetOiCapMultiplierArgs): Uint8Array;
+/** @deprecated v12.x helper — kept for legacy callers that use packOiCap(). */
 export declare function packOiCap(multiplierBps: number, softCapBps: number): bigint;
 /**
- * SetDisputeParams (Tag 80, PERC-314) — configure settlement dispute window
- * and bond (admin only).
- *
- * - `windowSlots = 0` disables disputes (ChallengeSettlement returns
- *   DisputeWindowClosed). Max: 2_000_000 slots (≈ 8 days at 400ms slots) to
- *   prevent DoS via absurd freezes.
- * - `bondAmount` (collateral tokens): refunded on dispute upheld, forfeited
- *   on reject. 0 = no bond required.
- *
- * Instruction data: tag(1) + window_slots(u64, 8) + bond_amount(u64, 8) = 17 bytes
+ * @deprecated v12.x SetDisputeParams (old tag 80). v17 reuses tag 80 for CloseLpVault.
  */
 export interface SetDisputeParamsArgs {
-    /** Dispute window in slots. 0 = disputes disabled. Max 2_000_000. */
     windowSlots: bigint | string;
-    /** Bond required to open a dispute (collateral units). 0 = no bond. */
     bondAmount: bigint | string;
 }
-export declare function encodeSetDisputeParams(args: SetDisputeParamsArgs): Uint8Array;
+export declare function encodeSetDisputeParams(_args: SetDisputeParamsArgs): Uint8Array;
 /**
- * SetLpCollateralParams (Tag 81, PERC-315) — configure LP token collateral
- * acceptance (admin only).
- *
- * - `enabled = 0`: DepositLpCollateral rejects all new deposits.
- * - `enabled = 1`: deposits allowed, subject to `ltvBps` haircut on value.
- * - `ltvBps` max 10_000 (100%). Typical: 5000 (50% LTV).
- *
- * Instruction data: tag(1) + enabled(u8, 1) + ltv_bps(u16, 2) = 4 bytes
+ * @deprecated v12.x SetLpCollateralParams (old tag 81). Not in v17.
  */
 export interface SetLpCollateralParamsArgs {
-    /** 0 = disabled (blocks new deposits), 1 = enabled. */
     enabled: number;
-    /** LTV in bps (0-10000). 5000 = 50% LTV. */
     ltvBps: number;
 }
-export declare function encodeSetLpCollateralParams(args: SetLpCollateralParamsArgs): Uint8Array;
+export declare function encodeSetLpCollateralParams(_args: SetLpCollateralParamsArgs): Uint8Array;
 /**
- * AcceptAdmin (Tag 82, Phase E 2026-04-17) — complete a two-step admin transfer.
- *
- * Called by the PROPOSED new admin (the pubkey passed to UpdateAdmin with
- * `new_admin != default()`). The signer must match config.pending_admin
- * exactly. On success, header.admin is swapped to pending_admin and
- * pending_admin is cleared.
- *
- * Use `try_update_admin` then `try_accept_admin` for a full rotation, or
- * skip AcceptAdmin entirely to leave a pending transfer that the old
- * admin can overwrite (propose-again) or the new admin can never accept.
- *
- * Accounts:
- *   [0] new admin (signer, must match pending_admin)
- *   [1] slab (writable)
- *
- * Instruction data: tag(1) = 1 byte. No payload.
+ * @deprecated v12.x AcceptAdmin (old tag 82). v17 uses UpdateAuthority(32) for admin rotation.
  */
 export declare function encodeAcceptAdmin(): Uint8Array;
 /**
- * ReclaimEmptyAccount (Tag 25) — permissionless reclamation of empty/dust
- * accounts (wrapper §2.6, §10.7).
- *
- * Wrapper decode: src/percolator.rs:2088. Wire: tag(1) + user_idx u16(2).
- *
- * Accounts: see ACCOUNTS_RECLAIM_EMPTY_ACCOUNT.
+ * @deprecated v12.x ReclaimEmptyAccount (old tag 85). Not in v17.
  */
 export interface ReclaimEmptyAccountArgs {
     userIdx: number;
 }
-export declare function encodeReclaimEmptyAccount(args: ReclaimEmptyAccountArgs): Uint8Array;
+export declare function encodeReclaimEmptyAccount(_args: ReclaimEmptyAccountArgs): Uint8Array;
 /**
- * SettleAccount (Tag 26) — standalone account settlement (wrapper §10.2).
- * Permissionless.
- *
- * Wrapper decode: src/percolator.rs:2092. Wire: tag(1) + user_idx u16(2).
- *
- * Accounts: see ACCOUNTS_SETTLE_ACCOUNT.
+ * @deprecated v12.x SettleAccount (old tag 86). Not in v17.
  */
 export interface SettleAccountArgs {
     userIdx: number;
 }
-export declare function encodeSettleAccount(args: SettleAccountArgs): Uint8Array;
+export declare function encodeSettleAccount(_args: SettleAccountArgs): Uint8Array;
 /**
- * DepositFeeCredits (Tag 27) — direct fee-debt repayment (wrapper §10.3.1).
- * Owner only.
- *
- * Wrapper decode: src/percolator.rs:2097. Wire: tag(1) + user_idx u16(2)
- * + amount u64(8).
- *
- * Accounts: see ACCOUNTS_DEPOSIT_FEE_CREDITS.
+ * @deprecated v12.x DepositFeeCredits (old tag 27). Not in v17.
  */
 export interface DepositFeeCreditsArgs {
     userIdx: number;
     amount: bigint | string;
 }
-export declare function encodeDepositFeeCredits(args: DepositFeeCreditsArgs): Uint8Array;
+export declare function encodeDepositFeeCredits(_args: DepositFeeCreditsArgs): Uint8Array;
 /**
  * ConvertReleasedPnl (Tag 28) — voluntary PnL conversion with open position
  * (wrapper §10.4.1). Owner only.
@@ -1385,38 +1632,331 @@ export interface ConvertReleasedPnlArgs {
 }
 export declare function encodeConvertReleasedPnl(args: ConvertReleasedPnlArgs): Uint8Array;
 /**
- * Authority kind for UpdateAuthority (tag 83). Maps to wrapper constants
- * AUTHORITY_ADMIN/HYPERP_MARK/INSURANCE/INSURANCE_OPERATOR at
- * src/percolator.rs:6862-6868.
+ * UpdateAuthority (tag 32) — rotate the single market-level authority (marketauth).
  *
- * Note: kind=3 is reserved (the v12.18.x split uses 0/1/2/4).
- */
-export declare const AUTHORITY_KIND: {
-    readonly Admin: 0;
-    readonly HyperpMark: 1;
-    readonly Insurance: 2;
-    readonly InsuranceOperator: 4;
-};
-export type AuthorityKind = (typeof AUTHORITY_KIND)[keyof typeof AUTHORITY_KIND];
-/**
- * UpdateAuthority (Tag 83) — unified mutator for the four authority slots
- * (admin, hyperp_mark, insurance, insurance_operator).
+ * v17 wire: tag(1) + new_pubkey[32] = 33 bytes.
  *
- * The instruction takes both the current authority and the new authority as
- * signers. Setting `newPubkey` to the zero pubkey burns the authority slot;
- * burning admin requires `permissionless_resolve_stale_slots > 0` AND
- * `force_close_delay_slots > 0` per the R4-H1 liveness guard.
+ * BREAKING vs v12.18.x: the kind byte is REMOVED. Tag 32 now ONLY rotates
+ * marketauth. Per-asset authority rotation uses tag 65 (UpdateAssetAuthority).
+ * Burning marketauth to zero is rejected on-chain.
  *
- * H-NEW-1 (closed in wrapper d760fc4): atomic admin rotation through this
- * tag now clears `config.pending_admin`, invalidating any stale tag-12
- * proposal.
+ * Accounts: [currentAuth(signer), newAuth(signer), slab(writable)]
  *
- * Wire: tag(1) + kind u8(1) + new_pubkey Pubkey(32) = 34 bytes.
- *
- * Accounts: see ACCOUNTS_UPDATE_AUTHORITY.
+ * @example
+ * ```ts
+ * const data = encodeUpdateAuthority({ newPubkey: newAdminKey });
+ * ```
  */
 export interface UpdateAuthorityArgs {
-    kind: AuthorityKind;
     newPubkey: PublicKey | string;
 }
 export declare function encodeUpdateAuthority(args: UpdateAuthorityArgs): Uint8Array;
+/**
+ * Per-asset authority kind for UpdateAssetAuthority (tag 65).
+ *
+ * Source: v16_program.rs Instruction::UpdateAssetAuthority + ASSET_AUTH_* consts.
+ *   0 = INSURANCE       — insurance_authority in AssetOracleProfileV16
+ *   1 = ASSET_ADMIN     — asset_admin (only burnable when asset_index != 0)
+ *   2 = BACKING_BUCKET  — backing_bucket_authority
+ *   3 = ORACLE          — oracle_authority
+ *   4 = INSURANCE_OPERATOR — insurance_operator
+ *
+ * Stake program uses kind=1 (ASSET_ADMIN) targeting asset_index=0 to bind
+ * the stake PDA-custody vault into the insurance_authority slot.
+ */
+export declare const ASSET_AUTH_KIND: {
+    readonly Insurance: 0;
+    readonly AssetAdmin: 1;
+    readonly BackingBucket: 2;
+    readonly Oracle: 3;
+    readonly InsuranceOperator: 4;
+};
+export type AssetAuthKind = (typeof ASSET_AUTH_KIND)[keyof typeof ASSET_AUTH_KIND];
+/**
+ * UpdateAssetAuthority (tag 65) — rotate a per-asset authority.
+ *
+ * Wire: tag(1) + asset_index(u16) + kind(u8) + new_pubkey[32] = 36 bytes.
+ *
+ * Gated by the asset's own asset_admin (can rotate any) or by the current
+ * holder of that authority (self-rotation). Isolated to the given asset_index.
+ *
+ * @param assetIndex Asset index (0 = primary, 1+ = additional assets).
+ * @param kind       ASSET_AUTH_KIND.* constant.
+ * @param newPubkey  New authority pubkey. Zero = burn (only AssetAdmin on asset!=0).
+ *
+ * @example
+ * ```ts
+ * // Rotate insurance authority for asset 0
+ * const data = encodeUpdateAssetAuthority({
+ *   assetIndex: 0,
+ *   kind: ASSET_AUTH_KIND.Insurance,
+ *   newPubkey: newInsuranceKey,
+ * });
+ * ```
+ */
+export interface UpdateAssetAuthorityArgs {
+    assetIndex: number;
+    kind: AssetAuthKind;
+    newPubkey: PublicKey | string;
+}
+export declare function encodeUpdateAssetAuthority(args: UpdateAssetAuthorityArgs): Uint8Array;
+/**
+ * One leg of a BatchTradeNoCpi instruction.
+ */
+export interface BatchTradeNoCpiLeg {
+    assetIndex: number;
+    sizeQ: bigint | string;
+    execPrice: bigint | string;
+    feeBps: bigint | string;
+}
+/**
+ * BatchTradeNoCpi (tag 66) — multi-leg NoCpi batch trade.
+ *
+ * Wire: tag(1) + n_legs(u8) + [asset_index(u16) + size_q(i128) + exec_price(u64) + fee_bps(u64)]×n
+ *
+ * @param legs Array of up to 255 trade legs.
+ *
+ * @example
+ * ```ts
+ * const data = encodeBatchTradeNoCpi({ legs: [
+ *   { assetIndex: 0, sizeQ: 1_000_000n, execPrice: 50_000_000_000n, feeBps: 30n },
+ *   { assetIndex: 1, sizeQ: -500_000n,  execPrice: 40_000_000_000n, feeBps: 30n },
+ * ]});
+ * ```
+ */
+export interface BatchTradeNoCpiArgs {
+    legs: BatchTradeNoCpiLeg[];
+}
+export declare function encodeBatchTradeNoCpi(args: BatchTradeNoCpiArgs): Uint8Array;
+/**
+ * One leg of a BatchTradeCpi instruction.
+ */
+export interface BatchTradeCpiLeg {
+    assetIndex: number;
+    sizeQ: bigint | string;
+    feeBps: bigint | string;
+    limitPrice: bigint | string;
+}
+/**
+ * BatchTradeCpi (tag 67) — multi-leg CPI batch trade.
+ *
+ * Wire: tag(1) + n_legs(u8) + [asset_index(u16) + size_q(i128) + fee_bps(u64) + limit_price(u64)]×n
+ *
+ * @param legs Array of up to 255 CPI trade legs.
+ *
+ * @example
+ * ```ts
+ * const data = encodeBatchTradeCpi({ legs: [
+ *   { assetIndex: 0, sizeQ: 1_000_000n, feeBps: 30n, limitPrice: 51_000_000_000n },
+ * ]});
+ * ```
+ */
+export interface BatchTradeCpiArgs {
+    legs: BatchTradeCpiLeg[];
+}
+export declare function encodeBatchTradeCpi(args: BatchTradeCpiArgs): Uint8Array;
+/**
+ * SetMatcherConfig (tag 68) — enable or disable the matcher for this portfolio.
+ *
+ * Wire: tag(1) + enabled(u8) = 2 bytes.
+ *
+ * @param enabled 1 = enabled, 0 = disabled.
+ *
+ * @example
+ * ```ts
+ * const data = encodeSetMatcherConfig({ enabled: 1 });
+ * ```
+ */
+export interface SetMatcherConfigArgs {
+    enabled: number;
+}
+export declare function encodeSetMatcherConfig(args: SetMatcherConfigArgs): Uint8Array;
+/**
+ * RestartAssetOracle (tag 69) — permissionless oracle restart.
+ *
+ * Wire: tag(1) + asset_index(u16) + now_slot(u64) + initial_price(u64) = 20 bytes.
+ *
+ * Used to un-stick a stale or hung oracle. Anyone can call this.
+ *
+ * @param assetIndex    Asset/domain index.
+ * @param nowSlot       Current slot.
+ * @param initialPrice  Initial mark price in e6 units.
+ *
+ * @example
+ * ```ts
+ * const data = encodeRestartAssetOracle({
+ *   assetIndex: 0,
+ *   nowSlot: currentSlot,
+ *   initialPrice: 50_000_000_000n,
+ * });
+ * ```
+ */
+export interface RestartAssetOracleArgs {
+    assetIndex: number;
+    nowSlot: bigint | string;
+    initialPrice: bigint | string;
+}
+export declare function encodeRestartAssetOracle(args: RestartAssetOracleArgs): Uint8Array;
+/**
+ * WithdrawInsuranceAsset (tag 57) — withdraw from a specific asset's insurance fund.
+ *
+ * Wire: tag(1) + asset_index(u16) + amount(u128) = 19 bytes.
+ *
+ * Replaces the v12.x gap at tag 57. Requires insurance_authority signature.
+ * asset_index is u16 (domain u8→u16 migration in v17).
+ *
+ * @param assetIndex  Asset/domain index (u16, not u8).
+ * @param amount      Amount to withdraw (u128).
+ *
+ * @example
+ * ```ts
+ * const data = encodeWithdrawInsuranceAsset({ assetIndex: 0, amount: 1_000_000n });
+ * ```
+ */
+export interface WithdrawInsuranceAssetArgs {
+    assetIndex: number;
+    amount: bigint | string;
+}
+export declare function encodeWithdrawInsuranceAsset(args: WithdrawInsuranceAssetArgs): Uint8Array;
+/**
+ * CreateLpVault (tag 74) — create the LP vault for a market/asset domain.
+ *
+ * Wire: tag(1) + fee_share_bps(u16) + redemption_cooldown_slots(u64) +
+ *       oi_reservation_threshold_bps(u16) + domain(u16) = 14 bytes.
+ *
+ * @param feeShareBps                  LP vault fee share in bps (0-10000).
+ * @param redemptionCooldownSlots      Slots between redemption requests.
+ * @param oiReservationThresholdBps    OI reservation threshold in bps.
+ * @param domain                       Asset/domain index (u16 in v17).
+ *
+ * @example
+ * ```ts
+ * const data = encodeCreateLpVault({
+ *   feeShareBps: 5000,
+ *   redemptionCooldownSlots: 21600n,
+ *   oiReservationThresholdBps: 8000,
+ *   domain: 0,
+ * });
+ * ```
+ */
+export interface CreateLpVaultArgs {
+    feeShareBps: number;
+    redemptionCooldownSlots: bigint | string;
+    oiReservationThresholdBps: number;
+    domain: number;
+}
+export declare function encodeCreateLpVaultV17(args: CreateLpVaultArgs): Uint8Array;
+/**
+ * DepositToLpVault (tag 75) — deposit collateral into the LP vault.
+ *
+ * Wire: tag(1) + amount(u128) = 17 bytes.
+ *
+ * @example
+ * ```ts
+ * const data = encodeDepositToLpVault({ amount: 1_000_000n });
+ * ```
+ */
+export declare function encodeDepositToLpVault(args: {
+    amount: bigint | string;
+}): Uint8Array;
+/**
+ * RequestRedeemLpShares (tag 76) — request redemption of LP vault shares.
+ *
+ * Wire: tag(1) + shares(u128) = 17 bytes.
+ *
+ * BREAKING vs v12.x: was LpVaultWithdraw (tag 39) with lpAmount u64.
+ * v17 uses shares u128 and a two-step request/execute redemption flow.
+ *
+ * @example
+ * ```ts
+ * const data = encodeRequestRedeemLpShares({ shares: 1_000_000n });
+ * ```
+ */
+export declare function encodeRequestRedeemLpShares(args: {
+    shares: bigint | string;
+}): Uint8Array;
+/**
+ * ExecuteRedemption (tag 77) — execute a pending LP redemption.
+ *
+ * Wire: tag(1) = 1 byte.
+ *
+ * @example
+ * ```ts
+ * const data = encodeExecuteRedemption();
+ * ```
+ */
+export declare function encodeExecuteRedemption(): Uint8Array;
+/**
+ * LpVaultCrankFees (tag 78) — crank fee accrual for the LP vault.
+ *
+ * Wire: tag(1) = 1 byte.
+ *
+ * @example
+ * ```ts
+ * const data = encodeLpVaultCrankFees();
+ * ```
+ */
+export declare function encodeLpVaultCrankFees(): Uint8Array;
+/**
+ * SetLpVaultPaused (tag 79) — pause or unpause the LP vault.
+ *
+ * Wire: tag(1) + paused(u8) = 2 bytes.
+ *
+ * @param paused 1 = paused, 0 = active.
+ *
+ * @example
+ * ```ts
+ * const data = encodeSetLpVaultPaused({ paused: 1 });
+ * ```
+ */
+export declare function encodeSetLpVaultPaused(args: {
+    paused: number;
+}): Uint8Array;
+/**
+ * CloseLpVault (tag 80) — close an empty LP vault.
+ *
+ * Wire: tag(1) = 1 byte.
+ *
+ * @example
+ * ```ts
+ * const data = encodeCloseLpVault();
+ * ```
+ */
+export declare function encodeCloseLpVault(): Uint8Array;
+/**
+ * TransferPortfolioOwnership (tag 72) — B-3 position ownership transfer.
+ *
+ * Wire: tag(1) + new_owner[32] + asset_index(u16) = 35 bytes.
+ *
+ * @param newOwner    New owner pubkey.
+ * @param assetIndex  Asset/domain index.
+ *
+ * @example
+ * ```ts
+ * const data = encodeTransferPortfolioOwnership({
+ *   newOwner: newOwnerKey,
+ *   assetIndex: 0,
+ * });
+ * ```
+ */
+export interface TransferPortfolioOwnershipArgs {
+    newOwner: PublicKey | string;
+    assetIndex: number;
+}
+export declare function encodeTransferPortfolioOwnership(args: TransferPortfolioOwnershipArgs): Uint8Array;
+/**
+ * SetNftProgramId (tag 73) — register the percolator-nft program in the NftRegistry.
+ *
+ * Wire: tag(1) + nft_program_id[32] = 33 bytes.
+ *
+ * @param nftProgramId  Pubkey of the percolator-nft program.
+ *
+ * @example
+ * ```ts
+ * const data = encodeSetNftProgramId({ nftProgramId: NFT_PROGRAM_ID });
+ * ```
+ */
+export interface SetNftProgramIdArgs {
+    nftProgramId: PublicKey | string;
+}
+export declare function encodeSetNftProgramId(args: SetNftProgramIdArgs): Uint8Array;

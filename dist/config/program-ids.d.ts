@@ -21,6 +21,22 @@ export declare const PROGRAM_IDS: {
         readonly matcher: "GDK8wx38kpiSVSfGTVNiSdptX3Z5R4kQyqh6Q3QX6wmi";
     };
 };
+/**
+ * v17 program IDs — placeholder until the v17 converged program is deployed.
+ *
+ * The v17 program uses `declare_id!("Perco1ator111111111111111111111111111111111")`
+ * in its source. This will be replaced with the real on-chain address when deployed.
+ *
+ * v17 converged programs are NOT deployed (cutover is Phase 7 gate).
+ */
+export declare const PROGRAM_IDS_V17: {
+    /** v17 wrapper placeholder (declare_id! value from v16_program.rs). */
+    readonly percolator: "Perco1ator111111111111111111111111111111111";
+    /** v17 stake placeholder. */
+    readonly stake: "Per5taTe111111111111111111111111111111111111";
+};
+/** The v17 wrapper placeholder PublicKey. Use only before mainnet cutover. */
+export declare const PROGRAM_ID_V17: PublicKey;
 export type Network = "devnet" | "mainnet";
 /**
  * Get the Percolator program ID for the current network

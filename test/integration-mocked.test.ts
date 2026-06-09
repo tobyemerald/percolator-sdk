@@ -413,7 +413,11 @@ describe("buildAdlTransaction — mocked RPC (PERC-8339)", () => {
     expect(ix).toBeNull();
   });
 
-  it("returns a valid instruction when ADL is triggered and positions exist", async () => {
+  // NOTE: In v17, ExecuteAdl (tag 101) was removed from the wrapper. buildAdlTransaction()
+  // calls buildAdlInstruction() which calls encodeExecuteAdl() which throws removedInstruction().
+  // When ADL is triggered and positions exist, the function now throws rather than returning an ix.
+
+  it("throws when ADL is triggered and positions exist (ExecuteAdl removed in v17)", async () => {
     const slabData = buildV1SmallSlab({
       pnlPosTot: 5_000_000n,
       maxPnlCap: 1_000_000n,
@@ -424,18 +428,12 @@ describe("buildAdlTransaction — mocked RPC (PERC-8339)", () => {
     });
     const conn = makeConnection({ slabData });
 
-    const ix = await buildAdlTransaction(conn, CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID);
-    expect(ix).not.toBeNull();
-    expect(ix!.programId.equals(PROGRAM_ID)).toBe(true);
-    // Instruction data: tag(1) + targetIdx u16 LE = 3 bytes
-    expect(ix!.data.length).toBe(3);
-    expect(ix!.data[0]).toBe(50); // execute_adl tag
-    // targetIdx 3 in LE u16
-    expect(ix!.data[1]).toBe(3);
-    expect(ix!.data[2]).toBe(0);
+    await expect(
+      buildAdlTransaction(conn, CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID)
+    ).rejects.toThrow("not in v17");
   });
 
-  it("picks highest pnlPct long as target (idx 3 > idx 7)", async () => {
+  it("throws for highest pnlPct long path too (ExecuteAdl removed in v17)", async () => {
     const slabData = buildV1SmallSlab({
       pnlPosTot: 5_000_000n,
       maxPnlCap: 1_000_000n,
@@ -447,55 +445,29 @@ describe("buildAdlTransaction — mocked RPC (PERC-8339)", () => {
     });
     const conn = makeConnection({ slabData });
 
-    const ix = await buildAdlTransaction(conn, CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID);
-    expect(ix).not.toBeNull();
-    const targetIdx = ix!.data[1] | (ix!.data[2] << 8);
-    expect(targetIdx).toBe(3); // highest pnlPct
+    await expect(
+      buildAdlTransaction(conn, CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID)
+    ).rejects.toThrow("not in v17");
   });
 
-  it("preferSide=long targets highest pnlPct long", async () => {
+  it("throws for preferSide=long path too (ExecuteAdl removed in v17)", async () => {
     const slabData = buildV1SmallSlab({
       pnlPosTot: 5_000_000n,
       maxPnlCap: 1_000_000n,
       accounts: [
-        { idx: 0, positionSize: -1_000_000n, pnl: 999_000n, capital: 1_000_000n }, // short, 99.9%
-        { idx: 1, positionSize:  1_000_000n, pnl: 200_000n, capital: 1_000_000n }, // long, 20%
-        { idx: 2, positionSize:  2_000_000n, pnl: 100_000n, capital: 1_000_000n }, // long, 10%
+        { idx: 0, positionSize: -1_000_000n, pnl: 999_000n, capital: 1_000_000n }, // short
+        { idx: 1, positionSize:  1_000_000n, pnl: 200_000n, capital: 1_000_000n }, // long
+        { idx: 2, positionSize:  2_000_000n, pnl: 100_000n, capital: 1_000_000n }, // long
       ],
     });
     const conn = makeConnection({ slabData });
 
-    const ix = await buildAdlTransaction(
-      conn, CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID, "long"
-    );
-    expect(ix).not.toBeNull();
-    const targetIdx = ix!.data[1] | (ix!.data[2] << 8);
-    expect(targetIdx).toBe(1); // highest pnlPct long (not the short)
+    await expect(
+      buildAdlTransaction(conn, CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID, "long")
+    ).rejects.toThrow("not in v17");
   });
 
-  it("instruction has correct account structure (4 keys: caller, slab, clock, oracle)", async () => {
-    const slabData = buildV1SmallSlab({
-      pnlPosTot: 5_000_000n,
-      maxPnlCap: 1_000_000n,
-      accounts: [{ idx: 5, positionSize: 1_000_000n, pnl: 100_000n, capital: 500_000n }],
-    });
-    const conn = makeConnection({ slabData });
-
-    const ix = await buildAdlTransaction(conn, CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID);
-    expect(ix).not.toBeNull();
-    const keys = ix!.keys;
-    expect(keys).toHaveLength(4);
-    expect(keys[0].pubkey.equals(CALLER)).toBe(true);
-    expect(keys[0].isSigner).toBe(true);
-    expect(keys[0].isWritable).toBe(false);
-    expect(keys[1].pubkey.equals(SLAB_KEY)).toBe(true);
-    expect(keys[1].isWritable).toBe(true);
-    expect(keys[2].pubkey.equals(SYSVAR_CLOCK_PUBKEY)).toBe(true);
-    expect(keys[3].pubkey.equals(ORACLE_KEY)).toBe(true);
-  });
-
-  it("encodes targetIdx > 255 correctly (u16 LE)", async () => {
-    // Use a large idx to verify u16 little-endian encoding
+  it("throws for large targetIdx too (ExecuteAdl removed in v17)", async () => {
     const slabData = buildV1SmallSlab({
       pnlPosTot: 5_000_000n,
       maxPnlCap: 1_000_000n,
@@ -508,13 +480,9 @@ describe("buildAdlTransaction — mocked RPC (PERC-8339)", () => {
     });
     const conn = makeConnection({ slabData });
 
-    const ix = await buildAdlTransaction(conn, CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID);
-    expect(ix).not.toBeNull();
-    const targetIdx = ix!.data[1] | (ix!.data[2] << 8);
-    expect(targetIdx).toBe(200); // highest pnlPct of the three
-    // Verify u16 LE: 200 = 0xC8 → [0xC8, 0x00]
-    expect(ix!.data[1]).toBe(0xC8);
-    expect(ix!.data[2]).toBe(0x00);
+    await expect(
+      buildAdlTransaction(conn, CALLER, SLAB_KEY, ORACLE_KEY, PROGRAM_ID)
+    ).rejects.toThrow("not in v17");
   });
 });
 
@@ -682,10 +650,16 @@ describe("fetchAdlRankings — mocked HTTP fetch (PERC-8339)", () => {
 });
 
 // ============================================================================
-// 5. Error codes 61-65 — realistic on-chain error log paths
+// 5. Error codes — v17 error boundary tests (v12 ADL codes 61-65 removed)
 // ============================================================================
 
 describe("Error codes 61-65 (ADL) — parseErrorFromLogs + decodeError (PERC-8339)", () => {
+  // NOTE: In v17, the PercolatorError enum only defines codes 0-46.
+  // The v12-specific ADL error codes (61-65: EngineSideBlocked, EngineCorruptState,
+  // InsuranceFundNotDepleted, NoAdlCandidates, BankruptPositionAlreadyClosed) no longer exist.
+  // Codes 47+ return undefined from decodeError/getErrorName/PERCOLATOR_ERRORS.
+  // These tests verify the v17 boundary behavior.
+
   // Helper: build a realistic Solana failed transaction log for a given error code
   function makeErrorLogs(hexCode: string): string[] {
     return [
@@ -695,154 +669,129 @@ describe("Error codes 61-65 (ADL) — parseErrorFromLogs + decodeError (PERC-833
     ];
   }
 
-  // ---- Code 61: EngineSideBlocked ----
-  it("61 (0x3D) — EngineSideBlocked: parseErrorFromLogs returns correct info", () => {
+  // ---- v17: codes 61-65 are undefined (not in v17 error table) ----
+  it("61 (0x3D) — parseErrorFromLogs returns code=61 but Unknown name (not in v17)", () => {
     const logs = makeErrorLogs("3D");
     const result = parseErrorFromLogs(logs);
     expect(result).not.toBeNull();
     expect(result!.code).toBe(61);
-    expect(result!.name).toBe("EngineSideBlocked");
-    expect(result!.hint).toMatch(/drain|blocked|mode/i);
+    // v17: code 61 is not in the table → Unknown(61)
+    expect(result!.name).toBe("Unknown(61)");
+    expect(result!.hint).toBeUndefined();
   });
 
-  it("61 — decodeError returns EngineSideBlocked", () => {
-    const info = decodeError(61);
-    expect(info).not.toBeNull();
-    expect(info!.name).toBe("EngineSideBlocked");
-    expect(PERCOLATOR_ERRORS[61]).toBeDefined();
+  it("61 — decodeError returns undefined (not in v17 error table)", () => {
+    expect(decodeError(61)).toBeUndefined();
+    expect(PERCOLATOR_ERRORS[61]).toBeUndefined();
   });
 
-  // ---- Code 62: EngineCorruptState ----
-  it("62 (0x3E) — EngineCorruptState: parseErrorFromLogs returns correct info", () => {
-    const logs = makeErrorLogs("3E");
-    const result = parseErrorFromLogs(logs);
+  it("62 — decodeError returns undefined (not in v17)", () => {
+    expect(decodeError(62)).toBeUndefined();
+    expect(PERCOLATOR_ERRORS[62]).toBeUndefined();
+  });
+
+  it("62 (0x3E) — parseErrorFromLogs returns Unknown(62)", () => {
+    const result = parseErrorFromLogs(makeErrorLogs("3E"));
     expect(result).not.toBeNull();
-    expect(result!.code).toBe(62);
-    expect(result!.name).toBe("EngineCorruptState");
-    expect(result!.hint).toMatch(/corrupt|invariant|critical/i);
+    expect(result!.name).toBe("Unknown(62)");
   });
 
-  it("62 — decodeError returns EngineCorruptState", () => {
-    const info = decodeError(62);
-    expect(info).not.toBeNull();
-    expect(info!.name).toBe("EngineCorruptState");
+  it("63 — decodeError returns undefined (not in v17)", () => {
+    expect(decodeError(63)).toBeUndefined();
+    expect(PERCOLATOR_ERRORS[63]).toBeUndefined();
   });
 
-  // ---- Code 63: InsuranceFundNotDepleted ----
-  it("63 (0x3F) — InsuranceFundNotDepleted: parseErrorFromLogs correct", () => {
-    const logs = makeErrorLogs("3F");
-    const result = parseErrorFromLogs(logs);
+  it("63 (0x3F) — parseErrorFromLogs returns Unknown(63)", () => {
+    const result = parseErrorFromLogs(makeErrorLogs("3F"));
     expect(result).not.toBeNull();
-    expect(result!.code).toBe(63);
-    expect(result!.name).toBe("InsuranceFundNotDepleted");
-    expect(result!.hint).toMatch(/insurance|depleted/i);
+    expect(result!.name).toBe("Unknown(63)");
   });
 
-  it("63 — decodeError returns InsuranceFundNotDepleted", () => {
-    const info = decodeError(63);
-    expect(info).not.toBeNull();
-    expect(info!.name).toBe("InsuranceFundNotDepleted");
-  });
-
-  it("63 — realistic log: ADL rejected because insurance fund has non-zero balance", () => {
+  it("63 — realistic log: error 0x3f returns Unknown(63) in v17", () => {
     const logs = [
       `Program ${PROGRAM_ID.toBase58()} invoke [1]`,
-      "Program log: Instruction: ExecuteAdl",
-      "Program log: ADL check: insurance_balance=500000 > 0",
+      "Program log: Instruction: SomeInstruction",
+      "Program log: insurance_balance=500000 > 0",
       `Program ${PROGRAM_ID.toBase58()} failed: custom program error: 0x3f`,
     ];
     const result = parseErrorFromLogs(logs);
     expect(result).not.toBeNull();
     expect(result!.code).toBe(63);
-    expect(result!.name).toBe("InsuranceFundNotDepleted");
+    expect(result!.name).toBe("Unknown(63)");
   });
 
-  // ---- Code 64: NoAdlCandidates ----
-  it("64 (0x40) — NoAdlCandidates: parseErrorFromLogs correct", () => {
-    const logs = makeErrorLogs("40");
-    const result = parseErrorFromLogs(logs);
+  it("64 — decodeError returns undefined (not in v17)", () => {
+    expect(decodeError(64)).toBeUndefined();
+    expect(PERCOLATOR_ERRORS[64]).toBeUndefined();
+  });
+
+  it("64 (0x40) — parseErrorFromLogs returns Unknown(64)", () => {
+    const result = parseErrorFromLogs(makeErrorLogs("40"));
     expect(result).not.toBeNull();
-    expect(result!.code).toBe(64);
-    expect(result!.name).toBe("NoAdlCandidates");
-    expect(result!.hint).toMatch(/candidate|eligible/i);
+    expect(result!.name).toBe("Unknown(64)");
   });
 
-  it("64 — decodeError returns NoAdlCandidates", () => {
-    const info = decodeError(64);
-    expect(info).not.toBeNull();
-    expect(info!.name).toBe("NoAdlCandidates");
-  });
-
-  it("64 — realistic log: all positions have size 0 (already closed)", () => {
+  it("64 — realistic log: error 0x40 returns Unknown(64) in v17", () => {
     const logs = [
       `Program ${PROGRAM_ID.toBase58()} invoke [1]`,
-      "Program log: Instruction: ExecuteAdl",
       "Program log: adl_candidates_count=0",
       `Program ${PROGRAM_ID.toBase58()} failed: custom program error: 0x40`,
     ];
     const result = parseErrorFromLogs(logs);
-    expect(result!.code).toBe(64);
-    expect(result!.name).toBe("NoAdlCandidates");
+    expect(result!.name).toBe("Unknown(64)");
   });
 
-  // ---- Code 65: BankruptPositionAlreadyClosed ----
-  it("65 (0x41) — BankruptPositionAlreadyClosed: parseErrorFromLogs correct", () => {
-    const logs = makeErrorLogs("41");
-    const result = parseErrorFromLogs(logs);
+  it("65 — decodeError returns undefined (not in v17)", () => {
+    expect(decodeError(65)).toBeUndefined();
+    expect(PERCOLATOR_ERRORS[65]).toBeUndefined();
+  });
+
+  it("65 (0x41) — parseErrorFromLogs returns Unknown(65)", () => {
+    const result = parseErrorFromLogs(makeErrorLogs("41"));
     expect(result).not.toBeNull();
-    expect(result!.code).toBe(65);
-    expect(result!.name).toBe("BankruptPositionAlreadyClosed");
-    expect(result!.hint).toMatch(/closed|size.*0|re-rank/i);
+    expect(result!.name).toBe("Unknown(65)");
   });
 
-  it("65 — decodeError returns BankruptPositionAlreadyClosed", () => {
-    const info = decodeError(65);
-    expect(info).not.toBeNull();
-    expect(info!.name).toBe("BankruptPositionAlreadyClosed");
-  });
-
-  it("65 — realistic log: keeper retried stale target_idx after another ADL closed it", () => {
+  it("65 — realistic log: error 0x41 returns Unknown(65) in v17", () => {
     const logs = [
       `Program ${PROGRAM_ID.toBase58()} invoke [1]`,
-      "Program log: Instruction: ExecuteAdl",
       "Program log: target_idx=3 position_size=0",
       `Program ${PROGRAM_ID.toBase58()} failed: custom program error: 0x41`,
     ];
     const result = parseErrorFromLogs(logs);
-    expect(result!.code).toBe(65);
-    expect(result!.name).toBe("BankruptPositionAlreadyClosed");
+    expect(result!.name).toBe("Unknown(65)");
   });
 
-  // ---- Regression: adjacent codes still correct ----
-  it("60 (0x3C) — EngineInvalidEntryPrice: not confused with ADL errors", () => {
+  // ---- Adjacent codes: code 46 IS in v17 (NftPortfolioProvenance), 47 is not ----
+  it("60 (0x3C) — parseErrorFromLogs returns Unknown(60) in v17 (no code 60)", () => {
     const logs = makeErrorLogs("3C");
     const result = parseErrorFromLogs(logs);
     expect(result).not.toBeNull();
     expect(result!.code).toBe(60);
-    expect(result!.name).toBe("EngineInvalidEntryPrice");
+    // v17 error table ends at 46; code 60 is undefined
+    expect(result!.name).toBe("Unknown(60)");
   });
 
-  it("all ADL error codes 61-65 are in the PERCOLATOR_ERRORS table", () => {
+  it("all v12 ADL error codes 61-65 are NOT in the v17 PERCOLATOR_ERRORS table", () => {
     for (let code = 61; code <= 65; code++) {
-      expect(PERCOLATOR_ERRORS[code], `code ${code} should be in table`).toBeDefined();
-      expect(PERCOLATOR_ERRORS[code].name).toBeTruthy();
-      expect(PERCOLATOR_ERRORS[code].hint).toBeTruthy();
+      expect(PERCOLATOR_ERRORS[code], `code ${code} should NOT be in v17 table`).toBeUndefined();
     }
   });
 
-  it("uppercase hex (0x3D vs 0x3d) handled identically", () => {
+  it("uppercase hex (0x3D vs 0x3d) handled identically — both return Unknown(61)", () => {
     const lower = parseErrorFromLogs(makeErrorLogs("3d"));
     const upper = parseErrorFromLogs(makeErrorLogs("3D"));
     expect(lower).not.toBeNull();
     expect(upper).not.toBeNull();
     expect(lower!.code).toBe(upper!.code);
     expect(lower!.name).toBe(upper!.name);
+    expect(lower!.name).toBe("Unknown(61)");
   });
 
-  it("returns null when logs have no error line (successful ADL tx)", () => {
+  it("returns null when logs have no error line (successful tx)", () => {
     const logs = [
       `Program ${PROGRAM_ID.toBase58()} invoke [1]`,
-      "Program log: Instruction: ExecuteAdl",
+      "Program log: Instruction: SomeTrade",
       `Program log: ${0xAD1E_0001} 3 150000000 500000000 0`,
       `Program ${PROGRAM_ID.toBase58()} consumed 40000 of 200000 compute units`,
       `Program ${PROGRAM_ID.toBase58()} success`,

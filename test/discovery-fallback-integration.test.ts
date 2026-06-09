@@ -1023,33 +1023,34 @@ describe("Static market registry interaction with tier 3", () => {
 // 9. ERROR CODES 61-65 IN FALLBACK CONTEXT
 // ===========================================================================
 
-describe("Error codes 61-65 — parsing in discovery/fallback context", () => {
+describe("Error codes — v17 NFT/LP-vault boundary parsing in discovery/fallback context", () => {
+  // NOTE: v17 only defines errors 0-46. v12 ADL errors 61-65 DO NOT EXIST.
   const PROG_ID_STR = "EXsr2Tfz8ntWYP3vgCStdknFBoafvJQugJKAh4nFdo8f";
 
-  function makeAdlErrorLog(hexCode: string): string[] {
+  function makeErrorLog(hexCode: string): string[] {
     return [
       `Program ${PROG_ID_STR} invoke [1]`,
-      "Program log: Instruction: ExecuteAdl",
+      "Program log: Instruction: PermissionlessCrank",
       `Program ${PROG_ID_STR} failed: custom program error: 0x${hexCode}`,
     ];
   }
 
-  const ADL_ERRORS: Array<{
+  // v17 LP-vault and NFT/B-3 errors (30-46)
+  const V17_BOUNDARY_ERRORS: Array<{
     code: number;
     hex: string;
     name: string;
     hintPattern: RegExp;
   }> = [
-    { code: 61, hex: "3d", name: "EngineSideBlocked", hintPattern: /drain|blocked|mode/i },
-    { code: 62, hex: "3e", name: "EngineCorruptState", hintPattern: /corrupt|invariant|critical/i },
-    { code: 63, hex: "3f", name: "InsuranceFundNotDepleted", hintPattern: /insurance|depleted/i },
-    { code: 64, hex: "40", name: "NoAdlCandidates", hintPattern: /candidate|eligible/i },
-    { code: 65, hex: "41", name: "BankruptPositionAlreadyClosed", hintPattern: /closed|size|re-rank/i },
+    { code: 30, hex: "1e", name: "LpVaultAlreadyExists", hintPattern: /vault|already/i },
+    { code: 37, hex: "25", name: "LpVaultOiReservationViolated", hintPattern: /oi|reservation|capacity/i },
+    { code: 42, hex: "2a", name: "NftRegistryNotFound", hintPattern: /nft|registry/i },
+    { code: 46, hex: "2e", name: "NftPortfolioProvenance", hintPattern: /provenance|portfolio/i },
   ];
 
-  for (const { code, hex, name, hintPattern } of ADL_ERRORS) {
+  for (const { code, hex, name, hintPattern } of V17_BOUNDARY_ERRORS) {
     it(`${code} (0x${hex}) — ${name}: parseErrorFromLogs`, () => {
-      const result = parseErrorFromLogs(makeAdlErrorLog(hex));
+      const result = parseErrorFromLogs(makeErrorLog(hex));
       expect(result).not.toBeNull();
       expect(result!.code).toBe(code);
       expect(result!.name).toBe(name);
@@ -1064,15 +1065,15 @@ describe("Error codes 61-65 — parsing in discovery/fallback context", () => {
     });
 
     it(`${code} — uppercase hex (0x${hex.toUpperCase()}) parses identically`, () => {
-      const lower = parseErrorFromLogs(makeAdlErrorLog(hex));
-      const upper = parseErrorFromLogs(makeAdlErrorLog(hex.toUpperCase()));
+      const lower = parseErrorFromLogs(makeErrorLog(hex));
+      const upper = parseErrorFromLogs(makeErrorLog(hex.toUpperCase()));
       expect(lower!.code).toBe(upper!.code);
       expect(lower!.name).toBe(upper!.name);
     });
   }
 
-  it("all ADL codes 61-65 are contiguous in PERCOLATOR_ERRORS", () => {
-    for (let code = 61; code <= 65; code++) {
+  it("v17 error codes 0-46 are all contiguous in PERCOLATOR_ERRORS", () => {
+    for (let code = 0; code <= 46; code++) {
       const info = decodeError(code);
       expect(info, `code ${code}`).toBeDefined();
       expect(info!.name).toBeTruthy();
@@ -1080,14 +1081,16 @@ describe("Error codes 61-65 — parsing in discovery/fallback context", () => {
     }
   });
 
-  it("adjacent code 60 (EngineInvalidEntryPrice) is NOT confused with ADL errors", () => {
-    const result = parseErrorFromLogs(makeAdlErrorLog("3c"));
-    expect(result!.code).toBe(60);
-    expect(result!.name).toBe("EngineInvalidEntryPrice");
+  it("v17 boundary: code 46 (NftPortfolioProvenance) is the last defined error", () => {
+    const result = parseErrorFromLogs(makeErrorLog("2e"));
+    expect(result!.code).toBe(46);
+    expect(result!.name).toBe("NftPortfolioProvenance");
   });
 
-  it("code 66 returns undefined (boundary check)", () => {
-    expect(decodeError(66)).toBeUndefined();
+  it("code 47+ returns undefined (beyond v17 error range)", () => {
+    expect(decodeError(47)).toBeUndefined();
+    expect(decodeError(61)).toBeUndefined();
+    expect(decodeError(65)).toBeUndefined();
   });
 });
 

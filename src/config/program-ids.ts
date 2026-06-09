@@ -33,6 +33,24 @@ export const PROGRAM_IDS = {
   },
 } as const;
 
+/**
+ * v17 program IDs — placeholder until the v17 converged program is deployed.
+ *
+ * The v17 program uses `declare_id!("Perco1ator111111111111111111111111111111111")`
+ * in its source. This will be replaced with the real on-chain address when deployed.
+ *
+ * v17 converged programs are NOT deployed (cutover is Phase 7 gate).
+ */
+export const PROGRAM_IDS_V17 = {
+  /** v17 wrapper placeholder (declare_id! value from v16_program.rs). */
+  percolator: "Perco1ator111111111111111111111111111111111",
+  /** v17 stake placeholder. */
+  stake: "Per5taTe111111111111111111111111111111111111",
+} as const;
+
+/** The v17 wrapper placeholder PublicKey. Use only before mainnet cutover. */
+export const PROGRAM_ID_V17 = new PublicKey(PROGRAM_IDS_V17.percolator);
+
 export type Network = "devnet" | "mainnet";
 
 /**

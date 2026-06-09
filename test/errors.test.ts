@@ -7,15 +7,33 @@ import {
   parseErrorFromLogs,
 } from "../src/abi/errors.js";
 
+/**
+ * v17 error table tests.
+ *
+ * Error ordinals sourced from v16_program.rs PercolatorError enum:
+ *   0-29  = toly base errors
+ *   30-41 = fork LP-vault errors
+ *   42-46 = fork NFT/B-3 errors
+ *   47+   = undefined (should be undefined in the table)
+ */
+
 // ============================================================================
 // Error table completeness
 // ============================================================================
 
 describe("PERCOLATOR_ERRORS table", () => {
-  it("has contiguous error codes from 0 to 65", () => {
-    for (let i = 0; i <= 65; i++) {      expect(PERCOLATOR_ERRORS[i]).toBeDefined();      expect(PERCOLATOR_ERRORS[i].name).toBeTruthy();
+  it("has contiguous error codes from 0 to 46", () => {
+    for (let i = 0; i <= 46; i++) {
+      expect(PERCOLATOR_ERRORS[i]).toBeDefined();
+      expect(PERCOLATOR_ERRORS[i].name).toBeTruthy();
       expect(PERCOLATOR_ERRORS[i].hint).toBeTruthy();
     }
+  });
+
+  it("error codes 47+ are not defined (v17 only has 0-46)", () => {
+    expect(PERCOLATOR_ERRORS[47]).toBeUndefined();
+    expect(PERCOLATOR_ERRORS[65]).toBeUndefined();
+    expect(PERCOLATOR_ERRORS[100]).toBeUndefined();
   });
 
   it("every error has a non-empty name", () => {
@@ -35,20 +53,43 @@ describe("PERCOLATOR_ERRORS table", () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  it("well-known error codes map to expected names", () => {
+  it("v17 well-known error codes map to expected names (toly base 0-29)", () => {
+    // toly base errors (0-29)
     expect(PERCOLATOR_ERRORS[0].name).toBe("InvalidMagic");
-    expect(PERCOLATOR_ERRORS[6].name).toBe("OracleStale");
-    expect(PERCOLATOR_ERRORS[13].name).toBe("EngineInsufficientBalance");
-    expect(PERCOLATOR_ERRORS[14].name).toBe("EngineUndercollateralized");
-    expect(PERCOLATOR_ERRORS[18].name).toBe("EngineOverflow");
-    expect(PERCOLATOR_ERRORS[22].name).toBe("EngineRiskReductionOnlyMode");
-    expect(PERCOLATOR_ERRORS[27].name).toBe("HyperpTradeNoCpiDisabled");
-    expect(PERCOLATOR_ERRORS[33].name).toBe("MarketPaused");
-    expect(PERCOLATOR_ERRORS[34].name).toBe("AdminRenounceNotAllowed");
-    expect(PERCOLATOR_ERRORS[44].name).toBe("LpVaultNoNewFees");
-    expect(PERCOLATOR_ERRORS[45].name).toBe("SafetyValveDominantSideBlocked");
-    expect(PERCOLATOR_ERRORS[59].name).toBe("OiImbalanceHardBlock");
-    expect(PERCOLATOR_ERRORS[60].name).toBe("EngineInvalidEntryPrice");
+    expect(PERCOLATOR_ERRORS[1].name).toBe("InvalidVersion");
+    expect(PERCOLATOR_ERRORS[2].name).toBe("AlreadyInitialized");
+    expect(PERCOLATOR_ERRORS[3].name).toBe("NotInitialized");
+    expect(PERCOLATOR_ERRORS[4].name).toBe("InvalidAccountKind");
+    expect(PERCOLATOR_ERRORS[5].name).toBe("InvalidAccountLen");
+    expect(PERCOLATOR_ERRORS[6].name).toBe("ExpectedSigner");
+    expect(PERCOLATOR_ERRORS[7].name).toBe("ExpectedWritable");
+    expect(PERCOLATOR_ERRORS[8].name).toBe("Unauthorized");
+    expect(PERCOLATOR_ERRORS[9].name).toBe("InvalidInstruction");
+    expect(PERCOLATOR_ERRORS[13].name).toBe("InvalidTokenProgram");
+    expect(PERCOLATOR_ERRORS[14].name).toBe("EngineInvalidConfig");
+    expect(PERCOLATOR_ERRORS[19].name).toBe("EngineStale");
+    expect(PERCOLATOR_ERRORS[26].name).toBe("OracleInvalid");
+    expect(PERCOLATOR_ERRORS[27].name).toBe("OracleStale");
+    expect(PERCOLATOR_ERRORS[28].name).toBe("OracleConfTooWide");
+    expect(PERCOLATOR_ERRORS[29].name).toBe("InvalidOracleKey");
+  });
+
+  it("v17 well-known error codes map to expected names (LP-vault 30-41)", () => {
+    expect(PERCOLATOR_ERRORS[30].name).toBe("LpVaultAlreadyExists");
+    expect(PERCOLATOR_ERRORS[31].name).toBe("LpVaultNotFound");
+    expect(PERCOLATOR_ERRORS[32].name).toBe("LpVaultPaused");
+    expect(PERCOLATOR_ERRORS[33].name).toBe("LpVaultSharesOutstanding");
+    expect(PERCOLATOR_ERRORS[37].name).toBe("LpVaultOiReservationViolated");
+    expect(PERCOLATOR_ERRORS[38].name).toBe("LpVaultNoFeesToCrank");
+    expect(PERCOLATOR_ERRORS[41].name).toBe("LpVaultZeroSharesMinted");
+  });
+
+  it("v17 well-known error codes map to expected names (NFT/B-3 42-46)", () => {
+    expect(PERCOLATOR_ERRORS[42].name).toBe("NftRegistryNotFound");
+    expect(PERCOLATOR_ERRORS[43].name).toBe("NftPortfolioNotTransferable");
+    expect(PERCOLATOR_ERRORS[44].name).toBe("NftTransferSelfOrZero");
+    expect(PERCOLATOR_ERRORS[45].name).toBe("NftInvalidMintAuthority");
+    expect(PERCOLATOR_ERRORS[46].name).toBe("NftPortfolioProvenance");
   });
 });
 
@@ -57,44 +98,64 @@ describe("PERCOLATOR_ERRORS table", () => {
 // ============================================================================
 
 describe("decodeError", () => {
-  it("returns error info for valid code 0", () => {
+  it("returns error info for valid code 0 (InvalidMagic)", () => {
     const info = decodeError(0);
     expect(info).toBeDefined();
     expect(info!.name).toBe("InvalidMagic");
   });
 
-  it("returns error info for code 33 (MarketPaused)", () => {
-    const info = decodeError(33);
+  it("returns error info for code 8 (Unauthorized)", () => {
+    const info = decodeError(8);
     expect(info).toBeDefined();
-    expect(info!.name).toBe("MarketPaused");
+    expect(info!.name).toBe("Unauthorized");
   });
 
-  it("returns error info for code 34 (AdminRenounceNotAllowed)", () => {
-    const info = decodeError(34);
+  it("returns error info for code 27 (OracleStale)", () => {
+    const info = decodeError(27);
     expect(info).toBeDefined();
-    expect(info!.name).toBe("AdminRenounceNotAllowed");
+    expect(info!.name).toBe("OracleStale");
   });
 
-  it("returns error info for code 45 (SafetyValveDominantSideBlocked)", () => {
-    const info = decodeError(45);
+  it("returns error info for code 30 (LpVaultAlreadyExists)", () => {
+    const info = decodeError(30);
     expect(info).toBeDefined();
-    expect(info!.name).toBe("SafetyValveDominantSideBlocked");  });
-  it("returns undefined for unknown code", () => {
+    expect(info!.name).toBe("LpVaultAlreadyExists");
+  });
+
+  it("returns error info for code 42 (NftRegistryNotFound)", () => {
+    const info = decodeError(42);
+    expect(info).toBeDefined();
+    expect(info!.name).toBe("NftRegistryNotFound");
+  });
+
+  it("returns undefined for unknown code 47 (beyond v17 range)", () => {
+    expect(decodeError(47)).toBeUndefined();
+  });
+
+  it("returns undefined for unknown code 10_000", () => {
     expect(decodeError(10_000)).toBeUndefined();
+  });
+
+  it("returns undefined for unknown code -1", () => {
     expect(decodeError(-1)).toBeUndefined();
-    expect(decodeError(66)).toBeUndefined();  });
-  it("returns error info for PERC extension codes 45 and 59", () => {
-    expect(decodeError(45)!.name).toBe("SafetyValveDominantSideBlocked");
-    expect(decodeError(59)!.name).toBe("OiImbalanceHardBlock");  });});// ============================================================================// getErrorName
+  });
+});
+
+// ============================================================================
+// getErrorName
 // ============================================================================
 
 describe("getErrorName", () => {
-  it("returns name for valid code", () => {
+  it("returns name for valid v17 codes", () => {
     expect(getErrorName(0)).toBe("InvalidMagic");
-    expect(getErrorName(13)).toBe("EngineInsufficientBalance");
+    expect(getErrorName(8)).toBe("Unauthorized");
+    expect(getErrorName(27)).toBe("OracleStale");
+    expect(getErrorName(30)).toBe("LpVaultAlreadyExists");
+    expect(getErrorName(42)).toBe("NftRegistryNotFound");
   });
 
   it("returns Unknown(...) for unknown codes", () => {
+    expect(getErrorName(47)).toBe("Unknown(47)");
     expect(getErrorName(999)).toBe("Unknown(999)");
     expect(getErrorName(100)).toBe("Unknown(100)");
   });
@@ -105,10 +166,22 @@ describe("getErrorName", () => {
 // ============================================================================
 
 describe("getErrorHint", () => {
-  it("returns hint for valid code", () => {
-    const hint = getErrorHint(6);
+  it("returns hint for valid v17 code 27 (OracleStale)", () => {
+    const hint = getErrorHint(27);
     expect(hint).toBeDefined();
-    expect(hint).toContain("Oracle price is too old");
+    expect(hint!.toLowerCase()).toContain("stale");
+  });
+
+  it("returns hint for valid v17 code 0 (InvalidMagic)", () => {
+    const hint = getErrorHint(0);
+    expect(hint).toBeDefined();
+    expect(hint!.toLowerCase()).toContain("magic");
+  });
+
+  it("returns hint for valid v17 code 8 (Unauthorized)", () => {
+    const hint = getErrorHint(8);
+    expect(hint).toBeDefined();
+    expect(hint!.toLowerCase()).toContain("author");
   });
 
   it("returns undefined for unknown code", () => {
@@ -121,19 +194,7 @@ describe("getErrorHint", () => {
 // ============================================================================
 
 describe("parseErrorFromLogs", () => {
-  it("parses hex error code from standard Solana log format", () => {
-    const logs = [
-      "Program log: Instruction: TradeNoCpi",
-      "Program 11111111111111111111111111111111 failed: custom program error: 0xd",
-    ];
-    const result = parseErrorFromLogs(logs);
-    expect(result).not.toBeNull();
-    expect(result!.code).toBe(13); // 0xd = 13
-    expect(result!.name).toBe("EngineInsufficientBalance");
-    expect(result!.hint).toContain("Not enough collateral");
-  });
-
-  it("parses code 0x0 (InvalidMagic)", () => {
+  it("parses hex error code 0x0 (InvalidMagic)", () => {
     const logs = [
       "Program xyz failed: custom program error: 0x0",
     ];
@@ -143,29 +204,50 @@ describe("parseErrorFromLogs", () => {
     expect(result!.name).toBe("InvalidMagic");
   });
 
-  it("parses multi-digit hex code 0x21 (MarketPaused = 33)", () => {
+  it("parses hex error code 0x8 (Unauthorized)", () => {
     const logs = [
-      "Program xyz failed: custom program error: 0x21",
+      "Program log: Instruction: TradeNoCpi",
+      "Program 11111111111111111111111111111111 failed: custom program error: 0x8",
     ];
     const result = parseErrorFromLogs(logs);
     expect(result).not.toBeNull();
-    expect(result!.code).toBe(33);
-    expect(result!.name).toBe("MarketPaused");
+    expect(result!.code).toBe(8);
+    expect(result!.name).toBe("Unauthorized");
   });
 
-  it("parses uppercase hex code", () => {
+  it("parses hex error code 0x1b (OracleStale = 27)", () => {
     const logs = [
-      "Program xyz failed: custom program error: 0xE",
+      "Program xyz failed: custom program error: 0x1b",
     ];
     const result = parseErrorFromLogs(logs);
     expect(result).not.toBeNull();
-    expect(result!.code).toBe(14); // EngineUndercollateralized
-    expect(result!.name).toBe("EngineUndercollateralized");
+    expect(result!.code).toBe(27);
+    expect(result!.name).toBe("OracleStale");
+  });
+
+  it("parses LpVault error 0x1e (LpVaultAlreadyExists = 30)", () => {
+    const logs = [
+      "Program xyz failed: custom program error: 0x1e",
+    ];
+    const result = parseErrorFromLogs(logs);
+    expect(result).not.toBeNull();
+    expect(result!.code).toBe(30);
+    expect(result!.name).toBe("LpVaultAlreadyExists");
+  });
+
+  it("parses NFT error 0x2a (NftRegistryNotFound = 42)", () => {
+    const logs = [
+      "Program xyz failed: custom program error: 0x2a",
+    ];
+    const result = parseErrorFromLogs(logs);
+    expect(result).not.toBeNull();
+    expect(result!.code).toBe(42);
+    expect(result!.name).toBe("NftRegistryNotFound");
   });
 
   it("returns null for logs without error", () => {
     const logs = [
-      "Program log: Instruction: InitUser",
+      "Program log: Instruction: InitPortfolio",
       "Program 11111111111111111111111111111111 consumed 50000 of 200000 compute units",
       "Program 11111111111111111111111111111111 success",
     ];
@@ -176,7 +258,7 @@ describe("parseErrorFromLogs", () => {
     expect(parseErrorFromLogs([])).toBeNull();
   });
 
-  it("handles unknown error codes gracefully", () => {
+  it("handles unknown error codes gracefully (beyond v17 range)", () => {
     const logs = [
       "Program xyz failed: custom program error: 0xff",
     ];
@@ -189,12 +271,12 @@ describe("parseErrorFromLogs", () => {
 
   it("returns first error if multiple errors in logs", () => {
     const logs = [
-      "Program A failed: custom program error: 0x6",
-      "Program B failed: custom program error: 0xd",
+      "Program A failed: custom program error: 0x1b",
+      "Program B failed: custom program error: 0x8",
     ];
     const result = parseErrorFromLogs(logs);
     expect(result).not.toBeNull();
-    expect(result!.code).toBe(6); // OracleStale — the first one
+    expect(result!.code).toBe(27); // OracleStale — the first one
   });
 
   it("returns null for non-array input (does not throw)", () => {
@@ -207,6 +289,7 @@ describe("parseErrorFromLogs", () => {
     const result = parseErrorFromLogs(logs);
     expect(result).not.toBeNull();
     expect(result!.code).toBe(5);
+    expect(result!.name).toBe("InvalidAccountLen");
   });
 
   it("does not match unbounded hex (avoids bogus precision-loss codes)", () => {

@@ -97,153 +97,314 @@ function concatBytes(...arrays) {
 
 // src/abi/instructions.ts
 var IX_TAG = {
+  // ── Core (tags 0-13) — byte-identical to v17 ─────────────────────────────
   InitMarket: 0,
+  InitPortfolio: 1,
+  /** @alias InitUser @since v12.x alias, canonical name is InitPortfolio in v17 */
   InitUser: 1,
+  /** @deprecated v17 has no LP role in the wrapper; matchers run as third-party programs. */
   InitLP: 2,
+  Deposit: 3,
+  /** @alias DepositCollateral @since v12.x alias */
   DepositCollateral: 3,
+  Withdraw: 4,
+  /** @alias WithdrawCollateral @since v12.x alias */
   WithdrawCollateral: 4,
+  /**
+   * PermissionlessCrank (tag 5).
+   *
+   * CRITICAL: The on-chain decoder reads funding_rate_e9 (i128) at bytes [4..20]
+   * and hard-rejects nonzero with InvalidInstructionData. SDK callers MUST use
+   * encodePermissionlessCrank() which hardcodes fundingRateE9=0n. Do NOT
+   * construct the payload manually and omit this field — that produces a
+   * malformed instruction (missing bytes).
+   */
+  PermissionlessCrank: 5,
+  /** @alias KeeperCrank @since v12.x alias */
   KeeperCrank: 5,
   TradeNoCpi: 6,
   LiquidateAtOracle: 7,
+  ClosePortfolio: 8,
+  /** @alias CloseAccount @since v12.x alias */
   CloseAccount: 8,
   TopUpInsurance: 9,
   TradeCpi: 10,
+  /** @deprecated tag 11 has no decode arm in v17 wrapper */
   SetRiskThreshold: 11,
+  /** @deprecated tag 12 has no decode arm in v17 wrapper */
   UpdateAdmin: 12,
   CloseSlab: 13,
-  UpdateConfig: 14,
-  SetMaintenanceFee: 15,
-  // 16, 17 — removed in v1.0.0-beta.29 (Phase G admin-push oracle removal)
-  SetOraclePriceCap: 18,
   ResolveMarket: 19,
-  WithdrawInsurance: 20,
-  AdminForceClose: 21,
-  // Tags 22-23: on-chain these are SetInsuranceWithdrawPolicy / WithdrawInsuranceLimited.
-  // Legacy aliases (UpdateRiskParams/RenounceAdmin) kept for backward compat.
-  SetInsuranceWithdrawPolicy: 22,
-  /** @deprecated Use SetInsuranceWithdrawPolicy */
-  UpdateRiskParams: 22,
-  WithdrawInsuranceLimited: 23,
-  /** @deprecated Use WithdrawInsuranceLimited */
-  RenounceAdmin: 23,
-  // Tags 24–26: on-chain = QueryLpFees/ReclaimEmptyAccount/SettleAccount.
-  // Old insurance LP tags removed — those moved to percolator-stake.
-  QueryLpFees: 24,
-  ReclaimEmptyAccount: 25,
-  SettleAccount: 26,
-  // Tags 27-28: on-chain = DepositFeeCredits/ConvertReleasedPnl.
-  DepositFeeCredits: 27,
+  // ── Backing/insurance domain ops (24, 28, 30, 41, 50, 52, 53, 54, 56, 57) ──
+  TopUpBackingBucket: 24,
   ConvertReleasedPnl: 28,
-  // Tags 29-30: on-chain = ResolvePermissionless/ForceCloseResolved.
-  ResolvePermissionless: 29,
-  // Note: `AcceptAdmin` used to be a @deprecated alias for tag 29; removed in
-  // beta.27 because AcceptAdmin is now a real instruction at tag 82 (Phase E).
-  ForceCloseResolved: 30,
-  // Tag 31: gap (no decode arm on-chain)
-  SetPythOracle: 32,
-  UpdateMarkPrice: 33,
-  UpdateHyperpMark: 34,
-  TradeCpiV2: 35,
-  UnresolveMarket: 36,
-  CreateLpVault: 37,
-  LpVaultDeposit: 38,
-  LpVaultWithdraw: 39,
-  LpVaultCrankFees: 40,
-  /** PERC-306: Fund per-market isolated insurance balance */
-  FundMarketInsurance: 41,
-  /** PERC-306: Set insurance isolation BPS for a market */
-  SetInsuranceIsolation: 42,
-  // Tag 43 is ChallengeSettlement on-chain (PERC-314).
-  // PERC-305 (ExecuteAdl) is NOT implemented on-chain — do NOT assign tag 43 here.
-  // When PERC-305 is implemented, assign a new unused tag (≥47).
-  /** PERC-314: Challenge settlement price during dispute window */
-  ChallengeSettlement: 43,
-  /** PERC-314: Resolve dispute (admin adjudication) */
-  ResolveDispute: 44,
-  /** PERC-315: Deposit LP vault tokens as perp collateral */
-  DepositLpCollateral: 45,
-  /** PERC-315: Withdraw LP collateral (position must be closed) */
-  WithdrawLpCollateral: 46,
-  /** PERC-309: Queue a large LP withdrawal (user; creates withdraw_queue PDA). */
-  QueueWithdrawal: 47,
-  /** PERC-309: Claim one epoch tranche from a queued LP withdrawal (user). */
-  ClaimQueuedWithdrawal: 48,
-  /** PERC-309: Cancel a queued withdrawal, refund remaining LP tokens (user). */
-  CancelQueuedWithdrawal: 49,
-  /** PERC-305: Auto-deleverage — surgically close profitable positions when PnL cap is exceeded (permissionless). */
-  ExecuteAdl: 50,
-  /** Close a stale slab of an invalid/old layout and recover rent SOL (admin only). */
-  CloseStaleSlabs: 51,
-  /** Reclaim rent from an uninitialised slab whose market creation failed mid-flow. Slab must sign. */
-  ReclaimSlabRent: 52,
-  /** Permissionless on-chain audit crank: verifies conservation invariants and pauses market on violation. */
-  AuditCrank: 53,
-  /** Cross-Market Portfolio Margining: SetOffsetPair */
-  SetOffsetPair: 54,
-  /** Cross-Market Portfolio Margining: AttestCrossMargin */
-  AttestCrossMargin: 55,
-  /** PERC-622: Advance oracle phase (permissionless crank) */
-  AdvanceOraclePhase: 56,
-  // 57: removed (keeper fund)
-  /** PERC-629: Slash a market creator's deposit (permissionless) */
-  SlashCreationDeposit: 58,
-  /** PERC-628: Initialize the global shared vault (admin) */
-  InitSharedVault: 59,
-  /** PERC-628: Allocate virtual liquidity to a market (admin) */
-  AllocateMarket: 60,
-  /** PERC-628: Queue a withdrawal for the current epoch */
-  QueueWithdrawalSV: 61,
-  /** PERC-628: Claim a queued withdrawal after epoch elapses */
-  ClaimEpochWithdrawal: 62,
-  /** PERC-628: Advance the shared vault epoch (permissionless crank) */
-  AdvanceEpoch: 63,
-  /** PERC-608: Mint a Position NFT for a user's open position. */
-  MintPositionNft: 64,
-  /** PERC-608: Transfer position ownership via the NFT (keeper-gated). */
-  TransferPositionOwnership: 65,
-  /** PERC-608: Burn the Position NFT when a position is closed. */
-  BurnPositionNft: 66,
-  /** PERC-608: Keeper sets pending_settlement flag before a funding transfer. */
-  SetPendingSettlement: 67,
-  /** PERC-608: Keeper clears pending_settlement flag after KeeperCrank. */
-  ClearPendingSettlement: 68,
-  /** PERC-608: Internal CPI call from percolator-nft TransferHook to update on-chain owner. */
-  TransferOwnershipCpi: 69,
-  /** PERC-8111: Set per-wallet position cap (admin only, cap_e6=0 disables). */
-  SetWalletCap: 70,
-  /** PERC-8110: Set OI imbalance hard-block threshold (admin only). */
-  SetOiImbalanceHardBlock: 71,
-  /** PERC-8270: Rescue orphan vault — recover tokens from a closed market's vault (admin). */
-  RescueOrphanVault: 72,
-  /** PERC-8270: Close orphan slab — reclaim rent from a slab whose market closed unexpectedly (admin). */
-  CloseOrphanSlab: 73,
-  /** PERC-SetDexPool: Pin admin-approved DEX pool address for a HYPERP market (admin). */
-  SetDexPool: 74,
-  /** CPI to the matcher program to initialize a matcher context account for an LP slot. Admin-only. */
-  InitMatcherCtx: 75,
-  /** PauseMarket (tag 76): admin emergency pause. Blocks Trade/Deposit/Withdraw/InitUser. */
-  PauseMarket: 76,
-  /** UnpauseMarket (tag 77): admin unpause. Re-enables all operations. */
-  UnpauseMarket: 77,
-  /** PERC-305 / SECURITY(H-4): Set PnL cap for ADL pre-check (admin only). */
-  SetMaxPnlCap: 78,
-  /** PERC-309: Set OI cap multiplier for LP withdrawal limits (admin only). Packed u64. */
-  SetOiCapMultiplier: 79,
-  /** PERC-314: Set dispute params (window_slots + bond_amount, admin only). */
-  SetDisputeParams: 80,
-  /** PERC-315: Set LP collateral params (enabled + ltv_bps, admin only). */
-  SetLpCollateralParams: 81,
-  /** Phase E (2026-04-17): Accept a pending admin transfer. Signer must match pending_admin. */
-  AcceptAdmin: 82,
+  CloseResolved: 30,
   /**
-   * v12.18.x 4-way authority split (added 2026-04-22, wrapper 86ea41f).
-   * Unified mutator for admin/hyperp_mark/insurance/insurance_operator.
-   * Wrapper handler: src/percolator.rs:6876.
+   * UpdateAuthority (tag 32) — v17 wire: tag(1) + new_pubkey[32].
+   *
+   * BREAKING vs v12.18.x: NO kind byte in v17. The kind byte was removed;
+   * tag 32 now ONLY rotates the single marketauth key. Per-asset authority
+   * rotation uses tag 65 (UpdateAssetAuthority).
    */
-  UpdateAuthority: 83
-  // 78: removed (keeper fund)
+  UpdateAuthority: 32,
+  ConfigureHybridOracle: 34,
+  ConfigureEwmaMark: 35,
+  PushEwmaMark: 36,
+  UpdateLiquidationFeePolicy: 37,
+  ConfigurePermissionlessResolve: 38,
+  ResolveStalePermissionless: 39,
+  UpdateAssetLifecycle: 40,
+  WithdrawInsurance: 41,
+  CureAndCancelClose: 42,
+  ForfeitRecoveryLeg: 43,
+  RebalanceReduce: 44,
+  FinalizeResetSide: 45,
+  ClaimResolvedPayoutTopup: 46,
+  RefineResolvedUnreceiptedBound: 47,
+  SyncMaintenanceFee: 48,
+  UpdateMaintenanceFeePolicy: 49,
+  WithdrawBackingBucket: 50,
+  UpdateBackingFeePolicy: 51,
+  WithdrawBackingBucketEarnings: 52,
+  SyncBackingDomainLedger: 53,
+  SyncInsuranceLedger: 54,
+  UpdateTradeFeePolicy: 55,
+  TopUpInsuranceDomain: 56,
+  /**
+   * WithdrawInsuranceAsset (tag 57) — v17 wire: tag(1) + asset_index(u16) + amount(u128).
+   *
+   * Replaces the v12.x gap at tag 57. Withdraws from a specific asset's
+   * insurance fund. asset_index is u16 (domain u8→u16 migration).
+   */
+  WithdrawInsuranceAsset: 57,
+  UpdateFeeRedirectPolicy: 58,
+  UpdateMarketInitFeePolicy: 59,
+  UpdateBaseUnitMints: 60,
+  SwapSecondaryForPrimary: 61,
+  ConfigureAuthMark: 62,
+  PushAuthMark: 63,
+  ForceCloseAbandonedAsset: 64,
+  // ── v17 auth-overhaul toly tags (65-69) — FREE range in v12.x ────────────
+  /**
+   * UpdateAssetAuthority (tag 65) — per-asset authority rotation.
+   *
+   * Wire: tag(1) + asset_index(u16) + kind(u8) + new_pubkey[32] = 36 bytes.
+   *
+   * kind values (matches v16_program.rs ASSET_AUTH_* constants):
+   *   0 = INSURANCE       — insurance_authority
+   *   1 = ASSET_ADMIN     — asset_admin (burnable when asset_index != 0)
+   *   2 = BACKING_BUCKET  — backing_bucket_authority
+   *   3 = ORACLE          — oracle_authority
+   *   4 = INSURANCE_OPERATOR — insurance_operator
+   *
+   * NOTE: The stake program uses kind=1 (ASSET_AUTH_INSURANCE=1 maps to the
+   * asset_admin route when targeting asset_index=0). See stake-program docs.
+   */
+  UpdateAssetAuthority: 65,
+  /**
+   * BatchTradeNoCpi (tag 66) — multi-leg NoCpi trade in one instruction.
+   *
+   * Wire: tag(1) + n_legs(u8) + [asset_index(u16)+size_q(i128)+exec_price(u64)+fee_bps(u64)]×n
+   */
+  BatchTradeNoCpi: 66,
+  /**
+   * BatchTradeCpi (tag 67) — multi-leg CPI trade in one instruction.
+   *
+   * Wire: tag(1) + n_legs(u8) + [asset_index(u16)+size_q(i128)+fee_bps(u64)+limit_price(u64)]×n
+   */
+  BatchTradeCpi: 67,
+  /**
+   * SetMatcherConfig (tag 68) — enable/disable the matcher for this portfolio.
+   *
+   * Wire: tag(1) + enabled(u8) = 2 bytes.
+   */
+  SetMatcherConfig: 68,
+  /**
+   * RestartAssetOracle (tag 69) — permissionless oracle restart after stale/stuck state.
+   *
+   * Wire: tag(1) + asset_index(u16) + now_slot(u64) + initial_price(u64) = 20 bytes.
+   */
+  RestartAssetOracle: 69,
+  // ── Fork NFT / B-3 (tags 72/73) — kept from v16 ─────────────────────────
+  /**
+   * TransferPortfolioOwnership (tag 72) — B-3 position ownership transfer.
+   *
+   * Wire: tag(1) + new_owner[32] + asset_index(u16) = 35 bytes.
+   */
+  TransferPortfolioOwnership: 72,
+  /**
+   * SetNftProgramId (tag 73) — register the percolator-nft program in the NftRegistry.
+   *
+   * Wire: tag(1) + nft_program_id[32] = 33 bytes.
+   */
+  SetNftProgramId: 73,
+  // ── Fork LP-vault (tags 74-80; moved from 65-71 to avoid toly collision) ──
+  /**
+   * CreateLpVault (tag 74).
+   * Wire: tag(1) + fee_share_bps(u16) + redemption_cooldown_slots(u64) +
+   *       oi_reservation_threshold_bps(u16) + domain(u16) = 14 bytes.
+   */
+  CreateLpVault: 74,
+  /**
+   * DepositToLpVault (tag 75).
+   * Wire: tag(1) + amount(u128) = 17 bytes.
+   */
+  DepositToLpVault: 75,
+  /**
+   * RequestRedeemLpShares (tag 76).
+   * Wire: tag(1) + shares(u128) = 17 bytes.
+   */
+  RequestRedeemLpShares: 76,
+  /**
+   * ExecuteRedemption (tag 77).
+   * Wire: tag(1) = 1 byte.
+   */
+  ExecuteRedemption: 77,
+  /**
+   * LpVaultCrankFees (tag 78).
+   * Wire: tag(1) = 1 byte.
+   */
+  LpVaultCrankFees: 78,
+  /**
+   * SetLpVaultPaused (tag 79).
+   * Wire: tag(1) + paused(u8) = 2 bytes.
+   */
+  SetLpVaultPaused: 79,
+  /**
+   * CloseLpVault (tag 80).
+   * Wire: tag(1) = 1 byte.
+   */
+  CloseLpVault: 80,
+  // ── Legacy aliases retained for source-compat (do NOT assign new tags) ────
+  /** @deprecated v12.x alias. Use DepositToLpVault(75) in v17. */
+  LpVaultDeposit: 75,
+  /** @deprecated v12.x alias. Use RequestRedeemLpShares(76) in v17 — NOTE: wire format changed. */
+  LpVaultWithdraw: 76,
+  // ── v12.x-only tags — NOT in v17 decoder. Encoders that use these throw removedInstruction(). ──
+  /** @deprecated v12.x tag 14. Removed in v17. */
+  UpdateConfig: 14,
+  /** @deprecated v12.x tag 15. Removed in v17. */
+  SetMaintenanceFee: 15,
+  /** @deprecated v12.x tag 16. Removed in v17. */
+  SetOraclePriceCap: 16,
+  /** @deprecated v12.x tag 17. Removed in v17. */
+  AdminForceClose: 17,
+  /** @deprecated v12.x tag 18. Removed in v17. */
+  UpdateRiskParams: 18,
+  /** @deprecated v12.x tag 20. Removed in v17. */
+  SetPythOracle: 20,
+  /** @deprecated v12.x tag 21. Removed in v17. */
+  RenounceAdmin: 21,
+  /** @deprecated v12.x tag 22. Removed in v17. */
+  SetInsuranceWithdrawPolicy: 22,
+  /** @deprecated v12.x tag 23. Removed in v17 — v17 uses WithdrawInsuranceLimited=23 from toly. */
+  WithdrawInsuranceLimited: 23,
+  /** @deprecated v12.x tag 25. Removed in v17. */
+  FundMarketInsurance: 25,
+  /** @deprecated v12.x tag 26. Removed in v17. */
+  SetInsuranceIsolation: 26,
+  /** @deprecated v12.x tag 27. Removed in v17. */
+  DepositFeeCredits: 27,
+  /** @deprecated v12.x tag 29. Removed in v17 — v17 uses ResolveStalePermissionless=39. */
+  ResolvePermissionless: 29,
+  /** @deprecated v12.x tag 30. Removed in v17 — v17 reuses 30 for CloseResolved (different wire). */
+  ForceCloseResolved: 30,
+  /** @deprecated v12.x tag 33. Removed in v17. */
+  UpdateInsurancePolicy: 33,
+  /** @deprecated v12.x tag 36. Removed in v12.17. */
+  UnresolveMarket: 36,
+  /** @deprecated v12.x tag 43. Removed in v17 — v17 uses 43 for ChallengeSettlement (different wire). */
+  ChallengeSettlement: 43,
+  /** @deprecated v12.x tag 44. Removed in v17 — v17 uses 44 for RebalanceReduce (different wire). */
+  ResolveDispute: 44,
+  /** @deprecated v12.x tag 45. Removed in v17 — v17 uses 45 for FinalizeResetSide. */
+  DepositLpCollateral: 45,
+  /** @deprecated v12.x tag 46. Removed in v17 — v17 uses 46 for ClaimResolvedPayoutTopup. */
+  WithdrawLpCollateral: 46,
+  /** @deprecated v12.x tag 54. Removed in v17 — v17 uses 54 for SyncInsuranceLedger. */
+  SetOffsetPair: 54,
+  /** @deprecated v12.x tag 55. Removed in v17 — v17 uses 55 for UpdateTradeFeePolicy. */
+  AttestCrossMargin: 55,
+  /** @deprecated v12.x tag 56. Removed in v17 — v17 uses 56 for TopUpInsuranceDomain. */
+  PauseMarket: 56,
+  /** @deprecated v12.x tag 58. Removed in v17 — v17 uses 58 for UpdateFeeRedirectPolicy. */
+  UnpauseMarket: 58,
+  /** @deprecated v12.x tag 64. Removed in v17 — v17 uses 64 for ForceCloseAbandonedAsset. */
+  MintPositionNft: 64,
+  /** @deprecated v12.x tag 65. COLLIDES with v17 UpdateAssetAuthority(65). Do NOT use. */
+  TransferPositionOwnership: 65,
+  /** @deprecated v12.x tag 66. COLLIDES with v17 BatchTradeNoCpi(66). Do NOT use. */
+  BurnPositionNft: 66,
+  /** @deprecated v12.x tag 67. COLLIDES with v17 BatchTradeCpi(67). Do NOT use. */
+  SetPendingSettlement: 67,
+  /** @deprecated v12.x tag 68. COLLIDES with v17 SetMatcherConfig(68). Do NOT use. */
+  ClearPendingSettlement: 68,
+  /** @deprecated v12.x tag 69. COLLIDES with v17 RestartAssetOracle(69). Do NOT use. */
+  TransferOwnershipCpi: 69,
+  /** @deprecated v12.x tag 70. Not in v17. */
+  SetWalletCap: 70,
+  /** @deprecated v12.x tag 71. Not in v17. */
+  SetOiImbalanceHardBlock: 71,
+  /** @deprecated v12.x tag 72. COLLIDES with v17 TransferPortfolioOwnership(72). Do NOT use. */
+  RescueOrphanVault: 72,
+  /** @deprecated v12.x tag 73. COLLIDES with v17 SetNftProgramId(73). Do NOT use. */
+  CloseOrphanSlab: 73,
+  /** @deprecated v12.x tag 74. COLLIDES with v17 CreateLpVault(74). Do NOT use. */
+  SetDexPool: 74,
+  /** @deprecated v12.x tag 75. COLLIDES with v17 DepositToLpVault(75). Do NOT use. */
+  InitMatcherCtx: 75,
+  /** @deprecated v12.x tag 78. COLLIDES with v17 LpVaultCrankFees(78). Do NOT use. */
+  SetMaxPnlCap: 78,
+  /** @deprecated v12.x tag 79. COLLIDES with v17 SetLpVaultPaused(79). Do NOT use. */
+  SetOiCapMultiplier: 79,
+  /** @deprecated v12.x tag 80. COLLIDES with v17 CloseLpVault(80). Do NOT use. */
+  SetDisputeParams: 80,
+  /** @deprecated v12.x tag 81. Not in v17. */
+  SetLpCollateralParams: 81,
+  /** @deprecated v12.x tag 82. Not in v17. */
+  AcceptAdmin: 82,
+  /** @deprecated v12.x tag 83. Not in v17 — v17 tag 32 UpdateAuthority has NO kind byte. */
+  ProposeAdmin: 83,
+  /** @deprecated v12.x tag 85. Not in v17. */
+  ReclaimEmptyAccount: 85,
+  /** @deprecated v12.x tag 86. Not in v17. */
+  SettleAccount: 86,
+  /** @deprecated v12.x tag 90. Not in v17. */
+  UpdateMarkPrice: 90,
+  /** @deprecated v12.x tag 91. Not in v17. */
+  AuditCrank: 91,
+  /** @deprecated v12.x tag 92. Not in v17. */
+  AdvanceOraclePhase: 92,
+  /** @deprecated v12.x tag 93. Not in v17. */
+  SlashCreationDeposit: 93,
+  /** @deprecated v12.x tag 94. Not in v17. */
+  InitSharedVault: 94,
+  /** @deprecated v12.x tag 95. Not in v17. */
+  AllocateMarket: 95,
+  /** @deprecated v12.x tag 96. Not in v17. */
+  QueueWithdrawalSV: 96,
+  /** @deprecated v12.x tag 97. Not in v17. */
+  ClaimEpochWithdrawal: 97,
+  /** @deprecated v12.x tag 98. Not in v17. */
+  AdvanceEpoch: 98,
+  /** @deprecated v12.x tag 99. Not in v17. */
+  ReclaimSlabRent: 99,
+  /** @deprecated v12.x tag 100. Not in v17. */
+  CloseStaleSlabs: 100,
+  /** @deprecated v12.x tag 101. Not in v17. */
+  ExecuteAdl: 101,
+  /** @deprecated v12.x tag 102. Not in v17. */
+  QueueWithdrawal: 102,
+  /** @deprecated v12.x tag 103. Not in v17. */
+  ClaimQueuedWithdrawal: 103,
+  /** @deprecated v12.x tag 104. Not in v17. */
+  CancelQueuedWithdrawal: 104,
+  /** @deprecated v12.x tag 105. Not in v17. */
+  TradeCpiV: 105
 };
 Object.freeze(IX_TAG);
+var EXPECTED_SLAB_VERSION = 16;
+var V17_SLAB_MAGIC = 0x5045524356313600n;
 function removedInstruction(name, tag, replacement) {
   const suffix = replacement ? ` Use ${replacement} instead.` : "";
   throw new Error(
@@ -381,35 +542,35 @@ function encodeWithdrawCollateral(args) {
     encU64(args.amount)
   );
 }
-var LiquidationPolicyTag = {
-  FullClose: 0,
-  ExactPartial: 1,
-  TouchOnly: 255
+var CrankAction = {
+  FeeSweep: 0,
+  Liquidate: 1
 };
-function encodeKeeperCrank(args) {
-  const parts = [
-    encU8(IX_TAG.KeeperCrank),
-    encU16(args.callerIdx),
-    encU8(1)
-    // format_version = 1 (REQUIRED by v12.17)
-  ];
-  if (args.candidates) {
-    for (const c of args.candidates) {
-      parts.push(encU16(c.idx));
-      parts.push(encU8(c.policy));
-      if (c.policy === LiquidationPolicyTag.ExactPartial) {
-        parts.push(encU128(c.quantity));
-      }
-    }
-  }
-  return concatBytes(...parts);
+function encodePermissionlessCrank(args) {
+  return concatBytes(
+    encU8(IX_TAG.PermissionlessCrank),
+    encU8(args.action),
+    encU16(args.assetIndex),
+    encU64(args.nowSlot),
+    encI128(0n),
+    // funding_rate_e9 HARDCODED=0n (program rejects nonzero)
+    encU128(args.closeQ),
+    encU64(args.feeBps),
+    encU8(args.recoveryReason)
+  );
+}
+function encodeKeeperCrank(_args) {
+  throw new Error(
+    "encodeKeeperCrank: v12.17 wire format is not accepted by the v17 wrapper. Use encodePermissionlessCrank() instead."
+  );
 }
 function encodeTradeNoCpi(args) {
   return concatBytes(
     encU8(IX_TAG.TradeNoCpi),
-    encU16(args.lpIdx),
-    encU16(args.userIdx),
-    encI128(args.size)
+    encU16(args.assetIndex),
+    encI128(args.sizeQ),
+    encU64(args.execPrice),
+    encU64(args.feeBps)
   );
 }
 function encodeLiquidateAtOracle(args) {
@@ -427,14 +588,14 @@ function encodeTopUpInsurance(args) {
 function encodeTradeCpi(args) {
   return concatBytes(
     encU8(IX_TAG.TradeCpi),
-    encU16(args.lpIdx),
-    encU16(args.userIdx),
-    encI128(args.size),
-    encU64(args.limitPriceE6)
+    encU16(args.assetIndex),
+    encI128(args.sizeQ),
+    encU64(args.feeBps),
+    encU64(args.limitPrice)
   );
 }
 function encodeTradeCpiV2(_args) {
-  return removedInstruction("TradeCpiV2", IX_TAG.TradeCpiV2, "encodeTradeCpi()");
+  return removedInstruction("TradeCpiV2", IX_TAG.TradeCpiV, "encodeTradeCpi()");
 }
 function encodeUnresolveMarket(_args) {
   return removedInstruction("UnresolveMarket", IX_TAG.UnresolveMarket, "encodeResolveMarket()");
@@ -448,24 +609,14 @@ function encodeUpdateAdmin(args) {
 function encodeCloseSlab() {
   return encU8(IX_TAG.CloseSlab);
 }
-function encodeUpdateConfig(args) {
-  return concatBytes(
-    encU8(IX_TAG.UpdateConfig),
-    encU64(args.fundingHorizonSlots),
-    encU64(args.fundingKBps),
-    encI64(args.fundingMaxPremiumBps),
-    encI64(args.fundingMaxBpsPerSlot),
-    encU16(args.tvlInsuranceCapMult ?? 0)
-  );
+function encodeUpdateConfig(_args) {
+  return removedInstruction("UpdateConfig (v12 tag 14 \u2014 not in v17)", IX_TAG.UpdateConfig, void 0);
 }
 function encodeSetMaintenanceFee(_args) {
   return removedInstruction("SetMaintenanceFee", IX_TAG.SetMaintenanceFee, "encodeInitMarket()");
 }
-function encodeSetOraclePriceCap(args) {
-  return concatBytes(
-    encU8(IX_TAG.SetOraclePriceCap),
-    encU64(args.maxChangeE2bps)
-  );
+function encodeSetOraclePriceCap(_args) {
+  return removedInstruction("SetOraclePriceCap (v12 tag 16 \u2014 not in v17)", IX_TAG.SetOraclePriceCap, void 0);
 }
 var RESOLVE_MODE_ORDINARY = 0;
 var RESOLVE_MODE_DEGENERATE = 1;
@@ -476,11 +627,8 @@ function encodeResolveMarket(args = {}) {
 function encodeWithdrawInsurance() {
   return encU8(IX_TAG.WithdrawInsurance);
 }
-function encodeAdminForceClose(args) {
-  return concatBytes(
-    encU8(IX_TAG.AdminForceClose),
-    encU16(args.targetIdx)
-  );
+function encodeAdminForceClose(_args) {
+  return removedInstruction("AdminForceClose (v12 tag 17 \u2014 not in v17)", IX_TAG.AdminForceClose, "encodeForceCloseAbandonedAsset() if applicable");
 }
 function encodeUpdateRiskParams(_args) {
   return removedInstruction(
@@ -498,14 +646,18 @@ function encodeRenounceAdmin() {
     "encodeWithdrawInsuranceLimited()"
   );
 }
-function encodeLpVaultWithdraw(args) {
-  return concatBytes(encU8(IX_TAG.LpVaultWithdraw), encU64(args.lpAmount));
+function encodeLpVaultWithdraw(_args) {
+  return removedInstruction(
+    "LpVaultWithdraw (v12 wire, tag 39\u219276 alias \u2014 wire format changed)",
+    IX_TAG.LpVaultWithdraw,
+    "encodeRequestRedeemLpShares() + encodeExecuteRedemption()"
+  );
 }
 function encodePauseMarket() {
-  return encU8(IX_TAG.PauseMarket);
+  return removedInstruction("PauseMarket (v12 tag 56 \u2014 now TopUpInsuranceDomain in v17)", IX_TAG.PauseMarket, void 0);
 }
 function encodeUnpauseMarket() {
-  return encU8(IX_TAG.UnpauseMarket);
+  return removedInstruction("UnpauseMarket (v12 tag 58 \u2014 now UpdateFeeRedirectPolicy in v17)", IX_TAG.UnpauseMarket, void 0);
 }
 function encodeSetPythOracle(args) {
   void args;
@@ -545,8 +697,8 @@ function computeEmaMarkPrice(markPrevE6, oracleE6, dtSlots, alphaE6 = MARK_PRICE
 function encodeUpdateHyperpMark() {
   return new Uint8Array([34]);
 }
-function encodeFundMarketInsurance(args) {
-  return concatBytes(encU8(IX_TAG.FundMarketInsurance), encU64(args.amount));
+function encodeFundMarketInsurance(_args) {
+  return removedInstruction("FundMarketInsurance (v12 tag 25 \u2014 not in v17)", IX_TAG.FundMarketInsurance, void 0);
 }
 function encodeSetInsuranceIsolation(args) {
   void args;
@@ -556,26 +708,26 @@ function encodeSetInsuranceIsolation(args) {
     "encodeFundMarketInsurance()"
   );
 }
-function encodeQueueWithdrawal(args) {
-  return concatBytes(encU8(IX_TAG.QueueWithdrawal), encU64(args.lpAmount));
+function encodeQueueWithdrawal(_args) {
+  return removedInstruction("QueueWithdrawal (v12 tag 102 \u2014 not in v17)", IX_TAG.QueueWithdrawal, "encodeRequestRedeemLpShares()");
 }
 function encodeClaimQueuedWithdrawal() {
-  return encU8(IX_TAG.ClaimQueuedWithdrawal);
+  return removedInstruction("ClaimQueuedWithdrawal (v12 tag 103 \u2014 not in v17)", IX_TAG.ClaimQueuedWithdrawal, void 0);
 }
 function encodeCancelQueuedWithdrawal() {
-  return encU8(IX_TAG.CancelQueuedWithdrawal);
+  return removedInstruction("CancelQueuedWithdrawal (v12 tag 104 \u2014 not in v17)", IX_TAG.CancelQueuedWithdrawal, void 0);
 }
-function encodeExecuteAdl(args) {
-  return concatBytes(encU8(IX_TAG.ExecuteAdl), encU16(args.targetIdx));
+function encodeExecuteAdl(_args) {
+  return removedInstruction("ExecuteAdl (v12 tag 101 \u2014 not in v17)", IX_TAG.ExecuteAdl, void 0);
 }
 function encodeCloseStaleSlabs() {
-  return encU8(IX_TAG.CloseStaleSlabs);
+  return removedInstruction("CloseStaleSlabs (v12 tag 100 \u2014 not in v17)", IX_TAG.CloseStaleSlabs, void 0);
 }
 function encodeReclaimSlabRent() {
-  return encU8(IX_TAG.ReclaimSlabRent);
+  return removedInstruction("ReclaimSlabRent (v12 tag 99 \u2014 not in v17)", IX_TAG.ReclaimSlabRent, void 0);
 }
 function encodeAuditCrank() {
-  return encU8(IX_TAG.AuditCrank);
+  return removedInstruction("AuditCrank (v12 tag 91 \u2014 not in v17)", IX_TAG.AuditCrank, void 0);
 }
 var VAMM_MAGIC = 0x504552434d415443n;
 var MATCHER_MAGIC = VAMM_MAGIC;
@@ -608,7 +760,7 @@ function computeVammQuote(params, oraclePriceE6, tradeSize, isLong) {
   }
 }
 function encodeAdvanceOraclePhase() {
-  return encU8(IX_TAG.AdvanceOraclePhase);
+  return removedInstruction("AdvanceOraclePhase (v12 tag 92 \u2014 not in v17)", IX_TAG.AdvanceOraclePhase, void 0);
 }
 var ORACLE_PHASE_NASCENT = 0;
 var ORACLE_PHASE_GROWING = 1;
@@ -644,138 +796,163 @@ function checkPhaseTransition(currentSlot, marketCreatedSlot, oraclePhase, cumul
 function encodeSlashCreationDeposit() {
   return removedInstruction("SlashCreationDeposit", IX_TAG.SlashCreationDeposit);
 }
-function encodeInitSharedVault(args) {
-  return concatBytes(
-    encU8(IX_TAG.InitSharedVault),
-    encU64(args.epochDurationSlots),
-    encU16(args.maxMarketExposureBps)
-  );
+function encodeInitSharedVault(_args) {
+  return removedInstruction("InitSharedVault (v12 tag 94 \u2014 not in v17)", IX_TAG.InitSharedVault, void 0);
 }
-function encodeAllocateMarket(args) {
-  return concatBytes(encU8(IX_TAG.AllocateMarket), encU128(args.amount));
+function encodeAllocateMarket(_args) {
+  return removedInstruction("AllocateMarket (v12 tag 95 \u2014 not in v17)", IX_TAG.AllocateMarket, void 0);
 }
-function encodeQueueWithdrawalSV(args) {
-  return concatBytes(encU8(IX_TAG.QueueWithdrawalSV), encU64(args.lpAmount));
+function encodeQueueWithdrawalSV(_args) {
+  return removedInstruction("QueueWithdrawalSV (v12 tag 96 \u2014 not in v17)", IX_TAG.QueueWithdrawalSV, void 0);
 }
 function encodeClaimEpochWithdrawal() {
-  return encU8(IX_TAG.ClaimEpochWithdrawal);
+  return removedInstruction("ClaimEpochWithdrawal (v12 tag 97 \u2014 not in v17)", IX_TAG.ClaimEpochWithdrawal, void 0);
 }
 function encodeAdvanceEpoch() {
-  return encU8(IX_TAG.AdvanceEpoch);
+  return removedInstruction("AdvanceEpoch (v12 tag 98 \u2014 not in v17)", IX_TAG.AdvanceEpoch, void 0);
 }
-function encodeSetOiImbalanceHardBlock(args) {
-  if (args.thresholdBps < 0 || args.thresholdBps > 1e4) {
-    throw new Error(`encodeSetOiImbalanceHardBlock: thresholdBps must be 0\u201310_000, got ${args.thresholdBps}`);
-  }
-  return concatBytes(encU8(IX_TAG.SetOiImbalanceHardBlock), encU16(args.thresholdBps));
+function encodeSetOiImbalanceHardBlock(_args) {
+  return removedInstruction("SetOiImbalanceHardBlock (v12 tag 71 \u2014 not in v17)", IX_TAG.SetOiImbalanceHardBlock, void 0);
 }
-function encodeMintPositionNft(args) {
-  return concatBytes(encU8(IX_TAG.MintPositionNft), encU16(args.userIdx));
-}
-function encodeTransferPositionOwnership(args) {
-  return concatBytes(encU8(IX_TAG.TransferPositionOwnership), encU16(args.userIdx));
-}
-function encodeBurnPositionNft(args) {
-  return concatBytes(encU8(IX_TAG.BurnPositionNft), encU16(args.userIdx));
-}
-function encodeSetPendingSettlement(args) {
-  return concatBytes(encU8(IX_TAG.SetPendingSettlement), encU16(args.userIdx));
-}
-function encodeClearPendingSettlement(args) {
-  return concatBytes(encU8(IX_TAG.ClearPendingSettlement), encU16(args.userIdx));
-}
-function encodeTransferOwnershipCpi(args) {
-  return concatBytes(
-    encU8(IX_TAG.TransferOwnershipCpi),
-    encU16(args.userIdx),
-    encPubkey(args.newOwner)
+function encodeMintPositionNft(_args) {
+  return removedInstruction(
+    "MintPositionNft (v12 tag 64 \u2014 COLLIDES with v17 ForceCloseAbandonedAsset)",
+    IX_TAG.MintPositionNft,
+    "percolator-nft program"
   );
 }
-function encodeSetWalletCap(args) {
-  return concatBytes(encU8(IX_TAG.SetWalletCap), encU64(args.capE6));
-}
-function encodeInitMatcherCtx(args) {
-  return concatBytes(
-    encU8(IX_TAG.InitMatcherCtx),
-    encU16(args.lpIdx),
-    encU8(args.kind),
-    encU32(args.tradingFeeBps),
-    encU32(args.baseSpreadBps),
-    encU32(args.maxTotalBps),
-    encU32(args.impactKBps),
-    encU128(args.liquidityNotionalE6),
-    encU128(args.maxFillAbs),
-    encU128(args.maxInventoryAbs),
-    encU16(args.feeToInsuranceBps),
-    encU16(args.skewSpreadMultBps)
+function encodeTransferPositionOwnership(_args) {
+  return removedInstruction(
+    "TransferPositionOwnership (v12 tag 65 \u2014 COLLIDES with v17 UpdateAssetAuthority)",
+    IX_TAG.TransferPositionOwnership,
+    "encodeTransferPortfolioOwnership() (tag 72)"
   );
 }
-function encodeSetInsuranceWithdrawPolicy(args) {
-  return concatBytes(encU8(IX_TAG.SetInsuranceWithdrawPolicy), encPubkey(args.authority), encU64(args.minWithdrawBase), encU16(args.maxWithdrawBps), encU64(args.cooldownSlots));
+function encodeBurnPositionNft(_args) {
+  return removedInstruction(
+    "BurnPositionNft (v12 tag 66 \u2014 COLLIDES with v17 BatchTradeNoCpi)",
+    IX_TAG.BurnPositionNft,
+    "percolator-nft program"
+  );
 }
-function encodeWithdrawInsuranceLimited(args) {
-  return concatBytes(encU8(IX_TAG.WithdrawInsuranceLimited), encU64(args.amount));
+function encodeSetPendingSettlement(_args) {
+  return removedInstruction(
+    "SetPendingSettlement (v12 tag 67 \u2014 COLLIDES with v17 BatchTradeCpi)",
+    IX_TAG.SetPendingSettlement,
+    "percolator-nft program"
+  );
+}
+function encodeClearPendingSettlement(_args) {
+  return removedInstruction(
+    "ClearPendingSettlement (v12 tag 68 \u2014 COLLIDES with v17 SetMatcherConfig)",
+    IX_TAG.ClearPendingSettlement,
+    "percolator-nft program"
+  );
+}
+function encodeTransferOwnershipCpi(_args) {
+  return removedInstruction(
+    "TransferOwnershipCpi (v12 tag 69 \u2014 COLLIDES with v17 RestartAssetOracle)",
+    IX_TAG.TransferOwnershipCpi,
+    "percolator-nft transfer hook"
+  );
+}
+function encodeSetWalletCap(_args) {
+  return removedInstruction("SetWalletCap (v12 tag 70 \u2014 not in v17)", IX_TAG.SetWalletCap, void 0);
+}
+function encodeInitMatcherCtx(_args) {
+  return removedInstruction(
+    "InitMatcherCtx (v12 tag 75 \u2014 COLLIDES with v17 DepositToLpVault)",
+    IX_TAG.InitMatcherCtx,
+    void 0
+  );
+}
+function encodeSetInsuranceWithdrawPolicy(_args) {
+  return removedInstruction("SetInsuranceWithdrawPolicy (v12 tag 22 \u2014 not in v17)", IX_TAG.SetInsuranceWithdrawPolicy, void 0);
+}
+function encodeWithdrawInsuranceLimited(_args) {
+  return removedInstruction("WithdrawInsuranceLimited (v12 tag 23 \u2014 verify v17 wire before use)", IX_TAG.WithdrawInsuranceLimited, void 0);
 }
 function encodeResolvePermissionless() {
-  return concatBytes(encU8(IX_TAG.ResolvePermissionless));
+  return removedInstruction(
+    "ResolvePermissionless (v12 tag 29 \u2014 use ResolveStalePermissionless(39) in v17)",
+    IX_TAG.ResolvePermissionless,
+    "encodeResolveStalePermissionless()"
+  );
 }
-function encodeForceCloseResolved(args) {
-  return concatBytes(encU8(IX_TAG.ForceCloseResolved), encU16(args.userIdx));
+function encodeForceCloseResolved(_args) {
+  return removedInstruction(
+    "ForceCloseResolved",
+    IX_TAG.ForceCloseResolved,
+    "encodeCloseResolved() for v17"
+  );
 }
 function encodeCreateLpVault(args) {
-  const parts = [encU8(IX_TAG.CreateLpVault), encU64(args.feeShareBps)];
-  if (args.utilCurveEnabled !== void 0) {
-    parts.push(encU8(args.utilCurveEnabled ? 1 : 0));
-  }
-  return concatBytes(...parts);
+  return removedInstruction(
+    "encodeCreateLpVault (v12 format)",
+    IX_TAG.CreateLpVault,
+    "encodeCreateLpVaultV17()"
+  );
 }
-function encodeLpVaultDeposit(args) {
-  return concatBytes(encU8(IX_TAG.LpVaultDeposit), encU64(args.amount));
+function encodeLpVaultDeposit(_args) {
+  return removedInstruction(
+    "encodeLpVaultDeposit (v12 format)",
+    IX_TAG.LpVaultDeposit,
+    "encodeDepositToLpVault()"
+  );
 }
-function encodeLpVaultCrankFees() {
-  return concatBytes(encU8(IX_TAG.LpVaultCrankFees));
+function encodeChallengeSettlement(_args) {
+  return removedInstruction(
+    "ChallengeSettlement",
+    IX_TAG.ChallengeSettlement,
+    void 0
+  );
 }
-function encodeChallengeSettlement(args) {
-  return concatBytes(encU8(IX_TAG.ChallengeSettlement), encU64(args.proposedPriceE6));
+function encodeResolveDispute(_args) {
+  return removedInstruction("ResolveDispute", IX_TAG.ResolveDispute, void 0);
 }
-function encodeResolveDispute(args) {
-  return concatBytes(encU8(IX_TAG.ResolveDispute), encU8(args.accept));
+function encodeDepositLpCollateral(_args) {
+  return removedInstruction("DepositLpCollateral", IX_TAG.DepositLpCollateral, void 0);
 }
-function encodeDepositLpCollateral(args) {
-  return concatBytes(encU8(IX_TAG.DepositLpCollateral), encU16(args.userIdx), encU64(args.lpAmount));
+function encodeWithdrawLpCollateral(_args) {
+  return removedInstruction("WithdrawLpCollateral", IX_TAG.WithdrawLpCollateral, void 0);
 }
-function encodeWithdrawLpCollateral(args) {
-  return concatBytes(encU8(IX_TAG.WithdrawLpCollateral), encU16(args.userIdx), encU64(args.lpAmount));
+function encodeSetOffsetPair(_args) {
+  return removedInstruction("SetOffsetPair", IX_TAG.SetOffsetPair, void 0);
 }
-function encodeSetOffsetPair(args) {
-  return concatBytes(encU8(IX_TAG.SetOffsetPair), encU16(args.offsetBps));
-}
-function encodeAttestCrossMargin(args) {
-  return concatBytes(encU8(IX_TAG.AttestCrossMargin), encU16(args.userIdxA), encU16(args.userIdxB));
+function encodeAttestCrossMargin(_args) {
+  return removedInstruction("AttestCrossMargin", IX_TAG.AttestCrossMargin, void 0);
 }
 function encodeRescueOrphanVault() {
-  return concatBytes(encU8(IX_TAG.RescueOrphanVault));
+  return removedInstruction("RescueOrphanVault", IX_TAG.RescueOrphanVault, "encodeTransferPortfolioOwnership()");
 }
 function encodeCloseOrphanSlab() {
-  return concatBytes(encU8(IX_TAG.CloseOrphanSlab));
+  return removedInstruction("CloseOrphanSlab", IX_TAG.CloseOrphanSlab, "encodeSetNftProgramId()");
 }
-function encodeSetDexPool(args) {
-  return concatBytes(encU8(IX_TAG.SetDexPool), encPubkey(args.pool));
+function encodeSetDexPool(_args) {
+  return removedInstruction("SetDexPool", IX_TAG.SetDexPool, "encodeCreateLpVaultV17()");
 }
 function encodeCreateInsuranceMint() {
-  return encodeCreateLpVault({ feeShareBps: 0n });
+  return removedInstruction("CreateInsuranceMint (v12 alias)", IX_TAG.CreateLpVault, "encodeCreateLpVaultV17()");
 }
-function encodeDepositInsuranceLP(args) {
-  return encodeLpVaultDeposit({ amount: args.amount });
+function encodeDepositInsuranceLP(_args) {
+  return removedInstruction("DepositInsuranceLP (v12 alias)", IX_TAG.DepositToLpVault, "encodeDepositToLpVault()");
 }
-function encodeWithdrawInsuranceLP(args) {
-  return encodeLpVaultWithdraw({ lpAmount: args.lpAmount });
+function encodeWithdrawInsuranceLP(_args) {
+  return removedInstruction("WithdrawInsuranceLP (v12 alias)", IX_TAG.RequestRedeemLpShares, "encodeRequestRedeemLpShares()");
 }
-function encodeSetMaxPnlCap(args) {
-  return concatBytes(encU8(IX_TAG.SetMaxPnlCap), encU64(args.cap));
+function encodeSetMaxPnlCap(_args) {
+  return removedInstruction(
+    "SetMaxPnlCap (v12 tag 78 \u2014 now LpVaultCrankFees in v17)",
+    IX_TAG.SetMaxPnlCap,
+    "encodeLpVaultCrankFees() [if you meant v17] or no equivalent"
+  );
 }
-function encodeSetOiCapMultiplier(args) {
-  return concatBytes(encU8(IX_TAG.SetOiCapMultiplier), encU64(args.packed));
+function encodeSetOiCapMultiplier(_args) {
+  return removedInstruction(
+    "SetOiCapMultiplier (v12 tag 79 \u2014 now SetLpVaultPaused in v17)",
+    IX_TAG.SetOiCapMultiplier,
+    "encodeSetLpVaultPaused() [if you meant v17]"
+  );
 }
 function packOiCap(multiplierBps, softCapBps) {
   if (multiplierBps < 0 || multiplierBps > 4294967295) {
@@ -786,41 +963,27 @@ function packOiCap(multiplierBps, softCapBps) {
   }
   return BigInt(multiplierBps) | BigInt(softCapBps) << 32n;
 }
-function encodeSetDisputeParams(args) {
-  return concatBytes(
-    encU8(IX_TAG.SetDisputeParams),
-    encU64(args.windowSlots),
-    encU64(args.bondAmount)
+function encodeSetDisputeParams(_args) {
+  return removedInstruction(
+    "SetDisputeParams (v12 tag 80 \u2014 now CloseLpVault in v17)",
+    IX_TAG.SetDisputeParams,
+    "encodeCloseLpVault() [if you meant v17]"
   );
 }
-function encodeSetLpCollateralParams(args) {
-  if (args.enabled !== 0 && args.enabled !== 1) {
-    throw new Error(`encodeSetLpCollateralParams: enabled must be 0 or 1, got ${args.enabled}`);
-  }
-  if (args.ltvBps < 0 || args.ltvBps > 1e4) {
-    throw new Error(`encodeSetLpCollateralParams: ltvBps ${args.ltvBps} out of range [0, 10000]`);
-  }
-  return concatBytes(
-    encU8(IX_TAG.SetLpCollateralParams),
-    encU8(args.enabled),
-    encU16(args.ltvBps)
-  );
+function encodeSetLpCollateralParams(_args) {
+  return removedInstruction("SetLpCollateralParams (v12 tag 81 \u2014 not in v17)", IX_TAG.SetLpCollateralParams, void 0);
 }
 function encodeAcceptAdmin() {
-  return encU8(IX_TAG.AcceptAdmin);
+  return removedInstruction("AcceptAdmin (v12 tag 82 \u2014 not in v17)", IX_TAG.AcceptAdmin, "encodeUpdateAuthority()");
 }
-function encodeReclaimEmptyAccount(args) {
-  return concatBytes(encU8(IX_TAG.ReclaimEmptyAccount), encU16(args.userIdx));
+function encodeReclaimEmptyAccount(_args) {
+  return removedInstruction("ReclaimEmptyAccount (v12 tag 85 \u2014 not in v17)", IX_TAG.ReclaimEmptyAccount, void 0);
 }
-function encodeSettleAccount(args) {
-  return concatBytes(encU8(IX_TAG.SettleAccount), encU16(args.userIdx));
+function encodeSettleAccount(_args) {
+  return removedInstruction("SettleAccount (v12 tag 86 \u2014 not in v17)", IX_TAG.SettleAccount, void 0);
 }
-function encodeDepositFeeCredits(args) {
-  return concatBytes(
-    encU8(IX_TAG.DepositFeeCredits),
-    encU16(args.userIdx),
-    encU64(args.amount)
-  );
+function encodeDepositFeeCredits(_args) {
+  return removedInstruction("DepositFeeCredits (v12 tag 27 \u2014 not in v17)", IX_TAG.DepositFeeCredits, void 0);
 }
 function encodeConvertReleasedPnl(args) {
   return concatBytes(
@@ -829,18 +992,119 @@ function encodeConvertReleasedPnl(args) {
     encU64(args.amount)
   );
 }
-var AUTHORITY_KIND = {
-  Admin: 0,
-  HyperpMark: 1,
-  Insurance: 2,
-  InsuranceOperator: 4
-};
-Object.freeze(AUTHORITY_KIND);
 function encodeUpdateAuthority(args) {
   return concatBytes(
     encU8(IX_TAG.UpdateAuthority),
+    encPubkey(args.newPubkey)
+  );
+}
+var ASSET_AUTH_KIND = {
+  Insurance: 0,
+  AssetAdmin: 1,
+  BackingBucket: 2,
+  Oracle: 3,
+  InsuranceOperator: 4
+};
+Object.freeze(ASSET_AUTH_KIND);
+function encodeUpdateAssetAuthority(args) {
+  return concatBytes(
+    encU8(IX_TAG.UpdateAssetAuthority),
+    encU16(args.assetIndex),
     encU8(args.kind),
     encPubkey(args.newPubkey)
+  );
+}
+function encodeBatchTradeNoCpi(args) {
+  if (args.legs.length > 255) {
+    throw new Error(`encodeBatchTradeNoCpi: too many legs (${args.legs.length} > 255)`);
+  }
+  const parts = [
+    encU8(IX_TAG.BatchTradeNoCpi),
+    encU8(args.legs.length)
+  ];
+  for (const leg of args.legs) {
+    parts.push(encU16(leg.assetIndex));
+    parts.push(encI128(leg.sizeQ));
+    parts.push(encU64(leg.execPrice));
+    parts.push(encU64(leg.feeBps));
+  }
+  return concatBytes(...parts);
+}
+function encodeBatchTradeCpi(args) {
+  if (args.legs.length > 255) {
+    throw new Error(`encodeBatchTradeCpi: too many legs (${args.legs.length} > 255)`);
+  }
+  const parts = [
+    encU8(IX_TAG.BatchTradeCpi),
+    encU8(args.legs.length)
+  ];
+  for (const leg of args.legs) {
+    parts.push(encU16(leg.assetIndex));
+    parts.push(encI128(leg.sizeQ));
+    parts.push(encU64(leg.feeBps));
+    parts.push(encU64(leg.limitPrice));
+  }
+  return concatBytes(...parts);
+}
+function encodeSetMatcherConfig(args) {
+  if (args.enabled !== 0 && args.enabled !== 1) {
+    throw new Error(`encodeSetMatcherConfig: enabled must be 0 or 1, got ${args.enabled}`);
+  }
+  return concatBytes(encU8(IX_TAG.SetMatcherConfig), encU8(args.enabled));
+}
+function encodeRestartAssetOracle(args) {
+  return concatBytes(
+    encU8(IX_TAG.RestartAssetOracle),
+    encU16(args.assetIndex),
+    encU64(args.nowSlot),
+    encU64(args.initialPrice)
+  );
+}
+function encodeWithdrawInsuranceAsset(args) {
+  return concatBytes(
+    encU8(IX_TAG.WithdrawInsuranceAsset),
+    encU16(args.assetIndex),
+    encU128(args.amount)
+  );
+}
+function encodeCreateLpVaultV17(args) {
+  return concatBytes(
+    encU8(IX_TAG.CreateLpVault),
+    encU16(args.feeShareBps),
+    encU64(args.redemptionCooldownSlots),
+    encU16(args.oiReservationThresholdBps),
+    encU16(args.domain)
+  );
+}
+function encodeDepositToLpVault(args) {
+  return concatBytes(encU8(IX_TAG.DepositToLpVault), encU128(args.amount));
+}
+function encodeRequestRedeemLpShares(args) {
+  return concatBytes(encU8(IX_TAG.RequestRedeemLpShares), encU128(args.shares));
+}
+function encodeExecuteRedemption() {
+  return encU8(IX_TAG.ExecuteRedemption);
+}
+function encodeLpVaultCrankFees() {
+  return encU8(IX_TAG.LpVaultCrankFees);
+}
+function encodeSetLpVaultPaused(args) {
+  return concatBytes(encU8(IX_TAG.SetLpVaultPaused), encU8(args.paused));
+}
+function encodeCloseLpVault() {
+  return encU8(IX_TAG.CloseLpVault);
+}
+function encodeTransferPortfolioOwnership(args) {
+  return concatBytes(
+    encU8(IX_TAG.TransferPortfolioOwnership),
+    encPubkey(args.newOwner),
+    encU16(args.assetIndex)
+  );
+}
+function encodeSetNftProgramId(args) {
+  return concatBytes(
+    encU8(IX_TAG.SetNftProgramId),
+    encPubkey(args.nftProgramId)
   );
 }
 
@@ -1379,270 +1643,196 @@ var WELL_KNOWN = {
 
 // src/abi/errors.ts
 var PERCOLATOR_ERRORS = {
+  // ── toly base errors (0-29) ─────────────────────────────────────────────────
   0: {
     name: "InvalidMagic",
-    hint: "The slab account has invalid data. Ensure you're using the correct slab address."
+    hint: "Account magic mismatch \u2014 not a v17 percolator account. Check the market group address."
   },
   1: {
     name: "InvalidVersion",
-    hint: "Slab version mismatch. The program may have been upgraded. Check for CLI updates."
+    hint: "Account version mismatch. Expected EXPECTED_SLAB_VERSION=16. The program may need upgrading."
   },
   2: {
     name: "AlreadyInitialized",
-    hint: "This account is already initialized. Use a different account or skip initialization."
+    hint: "Account is already initialized. Use a different account or check the market group address."
   },
   3: {
     name: "NotInitialized",
-    hint: "The slab is not initialized. Run 'init-market' first."
+    hint: "Account is not initialized. Run InitMarket first."
   },
   4: {
-    name: "InvalidSlabLen",
-    hint: "Slab account has wrong size. Create a new slab account with correct size."
+    name: "InvalidAccountKind",
+    hint: "Wrong account kind (market group vs portfolio vs insurance-ledger). Check account addresses."
   },
   5: {
-    name: "InvalidOracleKey",
-    hint: "Oracle account doesn't match config. Check the --oracle parameter matches the market's oracle."
+    name: "InvalidAccountLen",
+    hint: "Account data length is incorrect. The account may be from a different program version."
   },
   6: {
-    name: "OracleStale",
-    hint: "Oracle price is too old. Wait for oracle to update or check if oracle is paused."
+    name: "ExpectedSigner",
+    hint: "Missing required signature. Ensure the correct authority wallet is signing."
   },
   7: {
-    name: "OracleConfTooWide",
-    hint: "Oracle confidence interval is too wide. Wait for more stable market conditions."
+    name: "ExpectedWritable",
+    hint: "Account must be marked writable. This is likely a client-side account-list bug."
   },
   8: {
-    name: "InvalidVaultAta",
-    hint: "Vault token account is invalid. Check the vault account is correctly configured."
+    name: "Unauthorized",
+    hint: "Not authorized for this operation. Check marketauth or asset_admin authority."
   },
   9: {
-    name: "InvalidMint",
-    hint: "Token mint doesn't match. Ensure you're using the correct collateral token."
+    name: "InvalidInstruction",
+    hint: "Unknown instruction tag. The SDK and program versions may be mismatched."
   },
   10: {
-    name: "ExpectedSigner",
-    hint: "Missing required signature. Ensure the correct wallet is specified with --wallet."
+    name: "InvalidMint",
+    hint: "Token mint does not match the market's collateral mint."
   },
   11: {
-    name: "ExpectedWritable",
-    hint: "Account must be writable. This is likely a CLI bug - please report it."
+    name: "InvalidTokenAccount",
+    hint: "Token account is invalid. Ensure you have a correctly configured ATA."
   },
   12: {
-    name: "OracleInvalid",
-    hint: "Oracle data is invalid. Check the oracle account is a valid Pyth price feed."
+    name: "InvalidVaultAccount",
+    hint: "Vault account is invalid or does not match the market vault PDA."
   },
   13: {
-    name: "EngineInsufficientBalance",
-    hint: "Not enough collateral. Deposit more with 'deposit' before this operation."
+    name: "InvalidTokenProgram",
+    hint: "Invalid token program. Expected SPL Token or Token-2022."
   },
   14: {
-    name: "EngineUndercollateralized",
-    hint: "Account is undercollateralized. Deposit more collateral or reduce position size."
+    name: "EngineInvalidConfig",
+    hint: "Engine config is invalid. A required config field is missing or out of range."
   },
   15: {
-    name: "EngineUnauthorized",
-    hint: "Not authorized. You must be the account owner or admin for this operation."
+    name: "EngineArithmeticOverflow",
+    hint: "Arithmetic overflow in engine calculation. Try a smaller amount or position size."
   },
   16: {
-    name: "EngineInvalidMatchingEngine",
-    hint: "Matcher program/context doesn't match LP config. Check --matcher-program and --matcher-context."
+    name: "EngineProvenanceMismatch",
+    hint: "Portfolio provenance mismatch \u2014 the portfolio was not created for this market group."
   },
   17: {
-    name: "EnginePnlNotWarmedUp",
-    hint: "PnL not warmed up yet. Wait for the warmup period to complete before trading."
+    name: "EngineHiddenLeg",
+    hint: "Engine detected a hidden leg (unexpected zero-size outstanding position). Internal error."
   },
   18: {
-    name: "EngineOverflow",
-    hint: "Numeric overflow in calculation. Try a smaller amount or position size."
+    name: "EngineInvalidLeg",
+    hint: "Engine received an invalid trade leg. Check asset_index and size."
   },
   19: {
-    name: "EngineAccountNotFound",
-    hint: "Account not found at this index. Run 'init-user' or 'init-lp' first, or check the index."
+    name: "EngineStale",
+    hint: "Engine position is stale \u2014 the market mark price has not been updated recently."
   },
   20: {
-    name: "EngineNotAnLPAccount",
-    hint: "Expected an LP account but got a user account. Check the --lp-idx parameter."
+    name: "EngineBStale",
+    hint: "Engine B-side (batch) position stale. The batch crank needs to run."
   },
   21: {
-    name: "EnginePositionSizeMismatch",
-    hint: "Position size mismatch between user and LP. This shouldn't happen - please report it."
+    name: "EngineLockActive",
+    hint: "Engine lock is active \u2014 a close or recovery is in progress. Wait for it to complete."
   },
   22: {
-    name: "EngineRiskReductionOnlyMode",
-    hint: "Market is in risk-reduction mode. Only position-reducing trades are allowed."
+    name: "EngineNonProgress",
+    hint: "Engine operation made no progress. This usually means a crank was called with nothing to do."
   },
   23: {
-    name: "EngineAccountKindMismatch",
-    hint: "Wrong account type. User operations require user accounts, LP operations require LP accounts."
+    name: "EngineRecoveryRequired",
+    hint: "Engine requires a recovery crank before normal operations can resume."
   },
   24: {
-    name: "InvalidTokenAccount",
-    hint: "Token account is invalid. Ensure you have an ATA for the collateral mint."
+    name: "EngineCounterOverflow",
+    hint: "Engine counter overflow \u2014 too many assets or positions. Contact support."
   },
   25: {
-    name: "InvalidTokenProgram",
-    hint: "Invalid token program. Ensure SPL Token program is accessible."
+    name: "EngineCounterUnderflow",
+    hint: "Engine counter underflow \u2014 attempted to decrement a zero counter. Internal error."
   },
   26: {
-    name: "InvalidConfigParam",
-    hint: "Invalid configuration parameter. Check that leverage, fees, and risk thresholds are within allowed ranges."
+    name: "OracleInvalid",
+    hint: "Oracle data is invalid. Check the oracle account is a valid Pyth PriceUpdateV2 feed."
   },
   27: {
-    name: "HyperpTradeNoCpiDisabled",
-    hint: "TradeNoCpi is disabled for this market. Use TradeCpi with LP matching instead."
+    name: "OracleStale",
+    hint: "Oracle price is stale. Wait for the oracle to publish a fresh price."
   },
   28: {
-    name: "InsuranceMintAlreadyExists",
-    hint: "Insurance LP mint already exists for this market. Cannot recreate."
+    name: "OracleConfTooWide",
+    hint: "Oracle confidence interval too wide. Wait for more stable market conditions."
   },
   29: {
-    name: "InsuranceMintNotCreated",
-    hint: "Insurance LP mint has not been created yet. Run CreateInsuranceMint first."
+    name: "InvalidOracleKey",
+    hint: "Oracle account key does not match the market's configured oracle feed ID."
   },
+  // ── Fork LP-vault errors (30-41) ─────────────────────────────────────────────
   30: {
-    name: "InsuranceBelowThreshold",
-    hint: "Insurance fund balance is below the required threshold. Deposit more to insurance fund."
+    name: "LpVaultAlreadyExists",
+    hint: "LP vault already created for this asset domain. Each domain can only have one LP vault."
   },
   31: {
-    name: "InsuranceZeroAmount",
-    hint: "Insurance deposit/withdrawal amount must be greater than zero."
+    name: "LpVaultNotFound",
+    hint: "LP vault does not exist for this asset domain. Call CreateLpVault (tag 74) first."
   },
   32: {
-    name: "InsuranceSupplyMismatch",
-    hint: "Insurance LP token supply doesn't match vault balance. This is an internal error - please report it."
+    name: "LpVaultPaused",
+    hint: "LP vault is paused. Wait for the vault to be unpaused by the admin."
   },
   33: {
-    name: "MarketPaused",
-    hint: "This market is currently paused by the admin. Trading, deposits, and withdrawals are disabled."
+    name: "LpVaultSharesOutstanding",
+    hint: "Cannot close LP vault \u2014 shares are still outstanding. All redeemers must exit first."
   },
   34: {
-    name: "AdminRenounceNotAllowed",
-    hint: "Cannot renounce admin \u2014 the market must be RESOLVED first before renouncing admin control."
+    name: "LpVaultZeroAmount",
+    hint: "LP vault deposit or redemption amount must be greater than zero."
   },
   35: {
-    name: "InvalidConfirmation",
-    hint: "Invalid confirmation code for RenounceAdmin. This is a safety check \u2014 please verify the code."
+    name: "LpVaultInsufficientShares",
+    hint: "Insufficient LP vault shares to redeem. Check your share balance."
   },
   36: {
-    name: "InsufficientSeed",
-    hint: "Vault seed balance is below the required minimum (500,000,000 raw tokens). Deposit more tokens to the vault before InitMarket."
+    name: "LpVaultCooldownActive",
+    hint: "LP vault redemption cooldown is still active. Wait for the cooldown period to elapse."
   },
   37: {
-    name: "InsufficientDexLiquidity",
-    hint: "DEX pool has insufficient liquidity for safe Hyperp oracle bootstrapping. The quote-side reserves must meet the minimum threshold."
+    name: "LpVaultOiReservationViolated",
+    hint: "LP vault deposit would violate the OI reservation limit. The vault has insufficient capacity."
   },
   38: {
-    name: "LpVaultAlreadyExists",
-    hint: "LP vault already created for this market. Each market can only have one LP vault."
+    name: "LpVaultNoFeesToCrank",
+    hint: "No new fees to distribute to the LP vault. Wait for more trading activity."
   },
   39: {
-    name: "LpVaultNotCreated",
-    hint: "LP vault not yet created. Call CreateLpVault first before depositing or withdrawing."
+    name: "LpVaultSupplyMismatch",
+    hint: "LP vault share supply / capital mismatch. Internal invariant violation \u2014 please report."
   },
   40: {
-    name: "LpVaultZeroAmount",
-    hint: "LP vault deposit or withdrawal amount must be greater than zero."
+    name: "LpVaultAuthorityMismatch",
+    hint: "LP vault authority mismatch. The vault belongs to a different market group or admin."
   },
   41: {
-    name: "LpVaultSupplyMismatch",
-    hint: "LP vault supply/capital mismatch \u2014 LP share supply > 0 but vault capital is 0. This is an internal error \u2014 please report it."
+    name: "LpVaultZeroSharesMinted",
+    hint: "First LP deposit minted zero shares (capital too small relative to existing NAV). Deposit a larger amount."
   },
+  // ── Fork NFT / B-3 errors (42-46) ────────────────────────────────────────────
   42: {
-    name: "LpVaultWithdrawExceedsAvailable",
-    hint: "LP vault withdrawal exceeds available capital. Some capital is reserved for open interest coverage."
+    name: "NftRegistryNotFound",
+    hint: "NFT registry not found. Call SetNftProgramId (tag 73) to register the percolator-nft program first."
   },
   43: {
-    name: "LpVaultInvalidFeeShare",
-    hint: "LP vault fee share basis points out of range. Must be 0\u201310,000 (0%\u2013100%)."
+    name: "NftPortfolioNotTransferable",
+    hint: "Portfolio is not in a transferable state. Ensure the portfolio has no open positions or pending operations."
   },
   44: {
-    name: "LpVaultNoNewFees",
-    hint: "No new fees to distribute to LP vault. Wait for more trading activity to accrue fees."
+    name: "NftTransferSelfOrZero",
+    hint: "Cannot transfer portfolio to the zero address or to the current owner."
   },
-  // ── PERC-312 / PERC-314 / PERC-315 / PERC-309 / PERC-8111 / PERC-8110 (codes 45–60) ─────────
   45: {
-    name: "SafetyValveDominantSideBlocked",
-    hint: "New position on the dominant side is blocked while the market is rebalancing (safety valve)."
+    name: "NftInvalidMintAuthority",
+    hint: "NFT mint authority mismatch. The percolator-nft program may not match the registered NFT program ID."
   },
   46: {
-    name: "DisputeWindowClosed",
-    hint: "The dispute window for this resolved market has closed."
-  },
-  47: {
-    name: "DisputeAlreadyExists",
-    hint: "A dispute already exists for this market \u2014 cannot open another."
-  },
-  48: {
-    name: "MarketNotResolved",
-    hint: "Market is not resolved \u2014 cannot dispute an active market."
-  },
-  49: {
-    name: "NoActiveDispute",
-    hint: "No active dispute found for this market."
-  },
-  50: {
-    name: "LpCollateralDisabled",
-    hint: "LP collateral is not enabled for this market."
-  },
-  51: {
-    name: "LpCollateralPositionOpen",
-    hint: "Cannot withdraw LP collateral while a position is still open."
-  },
-  52: {
-    name: "WithdrawQueueAlreadyExists",
-    hint: "A withdrawal queue entry already exists for this user/market."
-  },
-  53: {
-    name: "WithdrawQueueNotFound",
-    hint: "No queued withdrawal found for this user/market."
-  },
-  54: {
-    name: "WithdrawQueueNothingClaimable",
-    hint: "Nothing is claimable from the withdrawal queue this epoch \u2014 wait for the next epoch."
-  },
-  55: {
-    name: "AuditViolation",
-    hint: "Audit crank detected a conservation invariant violation \u2014 this is a critical internal error, please report it."
-  },
-  56: {
-    name: "CrossMarginPairNotFound",
-    hint: "Cross-margin offset pair is not configured for these two slabs."
-  },
-  57: {
-    name: "CrossMarginAttestationStale",
-    hint: "Cross-margin attestation is stale \u2014 too many slots have elapsed since the last attestation."
-  },
-  58: {
-    name: "WalletPositionCapExceeded",
-    hint: "Trade rejected: the resulting position would exceed the per-wallet position cap (max_wallet_pos_e6) for this market."
-  },
-  59: {
-    name: "OiImbalanceHardBlock",
-    hint: "Trade rejected: it would increase the OI imbalance (|long_oi \u2212 short_oi| / total_oi) beyond the configured hard-block threshold (oi_imbalance_hard_block_bps). Try the opposite side."
-  },
-  60: {
-    name: "EngineInvalidEntryPrice",
-    hint: "Entry price must be positive when opening a position."
-  },
-  61: {
-    name: "EngineSideBlocked",
-    hint: "New position blocked \u2014 this side is in DrainOnly or ResetPending mode. Wait for the market to stabilise."
-  },
-  62: {
-    name: "EngineCorruptState",
-    hint: "Engine detected a corrupt state invariant violation \u2014 this is a critical internal error, please report it."
-  },
-  63: {
-    name: "InsuranceFundNotDepleted",
-    hint: "ADL rejected \u2014 insurance fund is not fully depleted (balance > 0). ADL is only permitted once insurance is exhausted."
-  },
-  64: {
-    name: "NoAdlCandidates",
-    hint: "ADL rejected \u2014 no eligible candidate positions found for deleveraging."
-  },
-  65: {
-    name: "BankruptPositionAlreadyClosed",
-    hint: "ADL rejected \u2014 the target position is already closed (size == 0). Re-rank and pick a different target."
+    name: "NftPortfolioProvenance",
+    hint: "Portfolio provenance mismatch for NFT transfer. The portfolio was not created for this market group."
   }
 };
 function decodeError(code) {
@@ -1706,6 +1896,13 @@ var PROGRAM_IDS = {
     matcher: "GDK8wx38kpiSVSfGTVNiSdptX3Z5R4kQyqh6Q3QX6wmi"
   }
 };
+var PROGRAM_IDS_V17 = {
+  /** v17 wrapper placeholder (declare_id! value from v16_program.rs). */
+  percolator: "Perco1ator111111111111111111111111111111111",
+  /** v17 stake placeholder. */
+  stake: "Per5taTe111111111111111111111111111111111111"
+};
+var PROGRAM_ID_V17 = new PublicKey3(PROGRAM_IDS_V17.percolator);
 function getProgramId(network) {
   const override = safeEnv("PROGRAM_ID");
   if (override) {
@@ -4207,6 +4404,170 @@ function parseAccount(data, idx) {
     pendingHorizon: null,
     pendingCreatedSlot: null
   };
+}
+var V17_MAGIC = 0x5045524356313600n;
+var V17_EXPECTED_VERSION = 16;
+var V17_WRAPPER_CONFIG_LEN = 432;
+var V17_ASSET_ORACLE_PROFILE_LEN = 400;
+var V17_HEADER_LEN = 16;
+var V17_MARKET_GROUP_OFF = V17_HEADER_LEN + V17_WRAPPER_CONFIG_LEN;
+function parseWrapperConfigV17(data, configOff = V17_HEADER_LEN) {
+  const MIN_LEN = configOff + V17_WRAPPER_CONFIG_LEN;
+  if (data.length < MIN_LEN) {
+    throw new Error(
+      `parseWrapperConfigV17: data too short \u2014 need ${MIN_LEN} bytes, got ${data.length}`
+    );
+  }
+  const b = configOff;
+  const marketauth = new PublicKey5(data.subarray(b + 0, b + 32));
+  const collateralMint = new PublicKey5(data.subarray(b + 32, b + 64));
+  const secondaryCollateralMint = new PublicKey5(data.subarray(b + 64, b + 96));
+  const maintenanceFeePerSlot = readU128LE(data, b + 96);
+  const permissionlessMarketInitFee = readU128LE(data, b + 112);
+  const tradeFeeBps = readU64LE(data, b + 128);
+  const permissionlessResolveStaleSlots = readU64LE(data, b + 136);
+  const forceCloseDelaySlots = readU64LE(data, b + 144);
+  const lastGoodOracleSlot = readU64LE(data, b + 152);
+  const insuranceWithdrawDepositRemaining = readU128LE(data, b + 160);
+  const insuranceWithdrawMaxBps = readU16LE(data, b + 176);
+  const liquidationCrankerFeeShareBps = readU16LE(data, b + 178);
+  const maintenanceCrankerFeeShareBps = readU16LE(data, b + 180);
+  const backingTradeFeeBpsLong = readU16LE(data, b + 182);
+  const unitScale = readU32LE(data, b + 184);
+  const confFilterBps = readU16LE(data, b + 188);
+  const backingTradeFeeBpsShort = readU16LE(data, b + 190);
+  const insuranceWithdrawDepositsOnly = readU8(data, b + 192);
+  const oracleMode = readU8(data, b + 193);
+  const oracleLegCount = readU8(data, b + 194);
+  const oracleLegFlags = readU8(data, b + 195);
+  const invert = readU8(data, b + 196);
+  const freeMarketSlotCount = readU16LE(data, b + 198);
+  const insuranceWithdrawCooldownSlots = readU64LE(data, b + 200);
+  const lastInsuranceWithdrawSlot = readU64LE(data, b + 208);
+  const maxStalenessSecs = readU64LE(data, b + 216);
+  const hybridSoftStaleSlots = readU64LE(data, b + 224);
+  const markEwmaE6 = readU64LE(data, b + 232);
+  const markEwmaLastSlot = readU64LE(data, b + 240);
+  const markEwmaHalflifeSlots = readU64LE(data, b + 248);
+  const markMinFee = readU64LE(data, b + 256);
+  const oracleTargetPriceE6 = readU64LE(data, b + 264);
+  const oracleTargetPublishTime = readU64LE(data, b + 272);
+  const ORACLE_LEG_CAP = 3;
+  const oracleLegFeeds = [];
+  for (let i = 0; i < ORACLE_LEG_CAP; i++) {
+    oracleLegFeeds.push(new PublicKey5(data.subarray(b + 280 + i * 32, b + 280 + (i + 1) * 32)));
+  }
+  const oracleLegPricesE6 = [];
+  for (let i = 0; i < ORACLE_LEG_CAP; i++) {
+    oracleLegPricesE6.push(readU64LE(data, b + 376 + i * 8));
+  }
+  const oracleLegPublishTimes = [];
+  for (let i = 0; i < ORACLE_LEG_CAP; i++) {
+    oracleLegPublishTimes.push(readI64LE(data, b + 400 + i * 8));
+  }
+  const backingTradeFeePolicyCount = readU16LE(data, b + 424);
+  const backingTradeFeeInsuranceShareBpsLong = readU16LE(data, b + 426);
+  const backingTradeFeeInsuranceShareBpsShort = readU16LE(data, b + 428);
+  const feeRedirectToMarket0Bps = readU16LE(data, b + 430);
+  return {
+    marketauth,
+    collateralMint,
+    secondaryCollateralMint,
+    maintenanceFeePerSlot,
+    permissionlessMarketInitFee,
+    tradeFeeBps,
+    permissionlessResolveStaleSlots,
+    forceCloseDelaySlots,
+    lastGoodOracleSlot,
+    insuranceWithdrawDepositRemaining,
+    insuranceWithdrawMaxBps,
+    liquidationCrankerFeeShareBps,
+    maintenanceCrankerFeeShareBps,
+    backingTradeFeeBpsLong,
+    unitScale,
+    confFilterBps,
+    backingTradeFeeBpsShort,
+    insuranceWithdrawDepositsOnly,
+    oracleMode,
+    oracleLegCount,
+    oracleLegFlags,
+    invert,
+    freeMarketSlotCount,
+    insuranceWithdrawCooldownSlots,
+    lastInsuranceWithdrawSlot,
+    maxStalenessSecs,
+    hybridSoftStaleSlots,
+    markEwmaE6,
+    markEwmaLastSlot,
+    markEwmaHalflifeSlots,
+    markMinFee,
+    oracleTargetPriceE6,
+    oracleTargetPublishTime,
+    oracleLegFeeds,
+    oracleLegPricesE6,
+    oracleLegPublishTimes,
+    backingTradeFeePolicyCount,
+    backingTradeFeeInsuranceShareBpsLong,
+    backingTradeFeeInsuranceShareBpsShort,
+    feeRedirectToMarket0Bps
+  };
+}
+function parseAssetOracleProfileV17(data, profileOff) {
+  const MIN_LEN = profileOff + V17_ASSET_ORACLE_PROFILE_LEN;
+  if (data.length < MIN_LEN) {
+    throw new Error(
+      `parseAssetOracleProfileV17: data too short \u2014 need ${MIN_LEN} bytes, got ${data.length}`
+    );
+  }
+  const b = profileOff;
+  const ORACLE_LEG_CAP = 3;
+  const oracleLegFeeds = [];
+  for (let i = 0; i < ORACLE_LEG_CAP; i++) {
+    oracleLegFeeds.push(new PublicKey5(data.subarray(b + 224 + i * 32, b + 224 + (i + 1) * 32)));
+  }
+  const oracleLegPricesE6 = [];
+  for (let i = 0; i < ORACLE_LEG_CAP; i++) {
+    oracleLegPricesE6.push(readU64LE(data, b + 320 + i * 8));
+  }
+  const oracleLegPublishTimes = [];
+  for (let i = 0; i < ORACLE_LEG_CAP; i++) {
+    oracleLegPublishTimes.push(readI64LE(data, b + 344 + i * 8));
+  }
+  return {
+    oracleMode: readU8(data, b + 0),
+    oracleLegCount: readU8(data, b + 1),
+    oracleLegFlags: readU8(data, b + 2),
+    invert: readU8(data, b + 3),
+    unitScale: readU32LE(data, b + 4),
+    confFilterBps: readU16LE(data, b + 8),
+    backingTradeFeeBpsLong: readU16LE(data, b + 10),
+    backingTradeFeeBpsShort: readU16LE(data, b + 12),
+    backingTradeFeeInsuranceShareBpsLong: readU16LE(data, b + 14),
+    backingTradeFeeInsuranceShareBpsShort: readU16LE(data, b + 16),
+    insuranceAuthority: new PublicKey5(data.subarray(b + 24, b + 56)),
+    insuranceOperator: new PublicKey5(data.subarray(b + 56, b + 88)),
+    backingBucketAuthority: new PublicKey5(data.subarray(b + 88, b + 120)),
+    oracleAuthority: new PublicKey5(data.subarray(b + 120, b + 152)),
+    maxStalenessSecs: readU64LE(data, b + 152),
+    hybridSoftStaleSlots: readU64LE(data, b + 160),
+    markEwmaE6: readU64LE(data, b + 168),
+    markEwmaLastSlot: readU64LE(data, b + 176),
+    markEwmaHalflifeSlots: readU64LE(data, b + 184),
+    markMinFee: readU64LE(data, b + 192),
+    oracleTargetPriceE6: readU64LE(data, b + 200),
+    oracleTargetPublishTime: readI64LE(data, b + 208),
+    lastGoodOracleSlot: readU64LE(data, b + 216),
+    oracleLegFeeds,
+    oracleLegPricesE6,
+    oracleLegPublishTimes,
+    assetAdmin: new PublicKey5(data.subarray(b + 368, b + 400))
+  };
+}
+function isV17Account(data) {
+  if (data.length < 10) return false;
+  const magic = readU64LE(data, 0);
+  const version = readU16LE(data, 8);
+  return magic === V17_MAGIC && version === V17_EXPECTED_VERSION;
 }
 function parseAllAccounts(data) {
   const indices = parseUsedIndices(data);
@@ -7047,7 +7408,7 @@ export {
   ACCOUNTS_WITHDRAW_INSURANCE_LIMITED_RESOLVED,
   ACCOUNTS_WITHDRAW_INSURANCE_LP,
   ACCOUNTS_WITHDRAW_LP_COLLATERAL,
-  AUTHORITY_KIND,
+  ASSET_AUTH_KIND,
   AccountKind,
   CHAINLINK_ANSWER_OFFSET,
   CHAINLINK_DECIMALS_OFFSET,
@@ -7056,9 +7417,11 @@ export {
   CTX_RETURN_OFFSET,
   CTX_VAMM_LEN,
   CTX_VAMM_OFFSET,
+  CrankAction,
   DEFAULT_OI_RAMP_SLOTS,
   ENGINE_MARK_PRICE_OFF,
   ENGINE_OFF,
+  EXPECTED_SLAB_VERSION,
   INIT_CTX_LEN,
   IX_TAG,
   LIGHTHOUSE_CONSTRAINT_ADDRESS,
@@ -7066,7 +7429,6 @@ export {
   LIGHTHOUSE_PROGRAM_ID,
   LIGHTHOUSE_PROGRAM_ID_STR,
   LIGHTHOUSE_USER_MESSAGE,
-  LiquidationPolicyTag,
   MARK_PRICE_EMA_ALPHA_E6,
   MARK_PRICE_EMA_WINDOW_SLOTS,
   MATCHER_CALL_LEN,
@@ -7087,6 +7449,8 @@ export {
   PHASE2_VOLUME_THRESHOLD,
   POSITION_NFT_STATE_LEN,
   PROGRAM_IDS,
+  PROGRAM_IDS_V17,
+  PROGRAM_ID_V17,
   PUMPSWAP_PROGRAM_ID,
   PYTH_PUSH_ORACLE_PROGRAM_ID,
   PYTH_RECEIVER_PROGRAM_ID,
@@ -7120,6 +7484,13 @@ export {
   STAKE_PROGRAM_IDS,
   TOKEN_2022_PROGRAM_ID,
   UNRESOLVE_CONFIRMATION,
+  V17_ASSET_ORACLE_PROFILE_LEN,
+  V17_EXPECTED_VERSION,
+  V17_HEADER_LEN,
+  V17_MAGIC,
+  V17_MARKET_GROUP_OFF,
+  V17_SLAB_MAGIC,
+  V17_WRAPPER_CONFIG_LEN,
   VAMM_MAGIC,
   ValidationError,
   WELL_KNOWN,
@@ -7192,6 +7563,8 @@ export {
   encodeAllocateMarket,
   encodeAttestCrossMargin,
   encodeAuditCrank,
+  encodeBatchTradeCpi,
+  encodeBatchTradeNoCpi,
   encodeBurnPositionNft,
   encodeCancelQueuedWithdrawal,
   encodeChallengeSettlement,
@@ -7199,17 +7572,21 @@ export {
   encodeClaimQueuedWithdrawal,
   encodeClearPendingSettlement,
   encodeCloseAccount,
+  encodeCloseLpVault,
   encodeCloseOrphanSlab,
   encodeCloseSlab,
   encodeCloseStaleSlabs,
   encodeConvertReleasedPnl,
   encodeCreateInsuranceMint,
   encodeCreateLpVault,
+  encodeCreateLpVaultV17,
   encodeDepositCollateral,
   encodeDepositFeeCredits,
   encodeDepositInsuranceLP,
   encodeDepositLpCollateral,
+  encodeDepositToLpVault,
   encodeExecuteAdl,
+  encodeExecuteRedemption,
   encodeForceCloseResolved,
   encodeFundMarketInsurance,
   encodeInitLP,
@@ -7228,22 +7605,28 @@ export {
   encodeNftMint,
   encodeNftSettleFunding,
   encodePauseMarket,
+  encodePermissionlessCrank,
   encodeQueueWithdrawal,
   encodeQueueWithdrawalSV,
   encodeReclaimEmptyAccount,
   encodeReclaimSlabRent,
   encodeRenounceAdmin,
+  encodeRequestRedeemLpShares,
   encodeRescueOrphanVault,
   encodeResolveDispute,
   encodeResolveMarket,
   encodeResolvePermissionless,
+  encodeRestartAssetOracle,
   encodeSetDexPool,
   encodeSetDisputeParams,
   encodeSetInsuranceIsolation,
   encodeSetInsuranceWithdrawPolicy,
   encodeSetLpCollateralParams,
+  encodeSetLpVaultPaused,
   encodeSetMaintenanceFee,
+  encodeSetMatcherConfig,
   encodeSetMaxPnlCap,
+  encodeSetNftProgramId,
   encodeSetOffsetPair,
   encodeSetOiCapMultiplier,
   encodeSetOiImbalanceHardBlock,
@@ -7278,10 +7661,12 @@ export {
   encodeTradeCpiV2,
   encodeTradeNoCpi,
   encodeTransferOwnershipCpi,
+  encodeTransferPortfolioOwnership,
   encodeTransferPositionOwnership,
   encodeUnpauseMarket,
   encodeUnresolveMarket,
   encodeUpdateAdmin,
+  encodeUpdateAssetAuthority,
   encodeUpdateAuthority,
   encodeUpdateConfig,
   encodeUpdateHyperpMark,
@@ -7289,6 +7674,7 @@ export {
   encodeUpdateRiskParams,
   encodeWithdrawCollateral,
   encodeWithdrawInsurance,
+  encodeWithdrawInsuranceAsset,
   encodeWithdrawInsuranceLP,
   encodeWithdrawInsuranceLimited,
   encodeWithdrawLpCollateral,
@@ -7317,12 +7703,14 @@ export {
   isLighthouseInstruction,
   isStandardToken,
   isToken2022,
+  isV17Account,
   isValidChainlinkOracle,
   maxAccountIndex,
   packOiCap,
   parseAccount,
   parseAdlEvent,
   parseAllAccounts,
+  parseAssetOracleProfileV17,
   parseChainlinkPrice,
   parseConfig,
   parseDexPool,
@@ -7332,6 +7720,7 @@ export {
   parseParams,
   parsePositionNftAccount,
   parseUsedIndices,
+  parseWrapperConfigV17,
   rankAdlPositions,
   readLastThrUpdateSlot,
   readNonce,

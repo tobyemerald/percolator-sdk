@@ -14,7 +14,8 @@ import {
   encodeInitUser,
   encodeDepositCollateral,
   encodeWithdrawCollateral,
-  encodeKeeperCrank,
+  encodePermissionlessCrank,
+  CrankAction,
   encodeTradeNoCpi,
   encodeTradeCpi,
   encodeTradeCpiV2,
@@ -32,6 +33,23 @@ import {
   encodeSetPendingSettlement,
   encodeClearPendingSettlement,
   encodeTransferOwnershipCpi,
+  encodeUpdateAssetAuthority,
+  ASSET_AUTH_KIND,
+  encodeBatchTradeNoCpi,
+  encodeBatchTradeCpi,
+  encodeSetMatcherConfig,
+  encodeRestartAssetOracle,
+  encodeWithdrawInsuranceAsset,
+  encodeTransferPortfolioOwnership,
+  encodeSetNftProgramId,
+  encodeCreateLpVaultV17,
+  encodeDepositToLpVault,
+  encodeRequestRedeemLpShares,
+  encodeExecuteRedemption,
+  encodeLpVaultCrankFees,
+  encodeSetLpVaultPaused,
+  encodeCloseLpVault,
+  encodeKeeperCrank,
   IX_TAG,
 } from "../src/abi/instructions.js";
 
@@ -245,50 +263,122 @@ console.log("\nTesting instruction encoders...\n");
   console.log("✓ encodeWithdrawCollateral");
 }
 
-// Test KeeperCrank encoding (v12.17: tag + u16 + format_version=1 + candidates)
+// Test encodeKeeperCrank throws (deprecated v12.17 wire — not accepted by v17 wrapper)
 {
-  const data = encodeKeeperCrank({
-    callerIdx: 1,
+  let threw = false;
+  try { encodeKeeperCrank({ callerIdx: 1 }); } catch { threw = true; }
+  assert(threw, "encodeKeeperCrank must throw (v12 wire removed in v17)");
+  console.log("✓ encodeKeeperCrank rejects removed v12 wire");
+}
+
+// Test encodePermissionlessCrank (v17 wire: 53 bytes)
+// Wire: tag(1) + action(u8) + asset_index(u16) + now_slot(u64) +
+//       funding_rate_e9=0n(i128) + close_q(u128) + fee_bps(u64) + recovery_reason(u8)
+// Total: 1+1+2+8+16+16+8+1 = 53 bytes
+{
+  const data = encodePermissionlessCrank({
+    action: CrankAction.FeeSweep,
+    assetIndex: 0,
+    nowSlot: 1000n,
+    closeQ: 0n,
+    feeBps: 0n,
+    recoveryReason: 0,
   });
-  assert(data.length === 4, "KeeperCrank length (empty candidates)");
-  assert(data[0] === IX_TAG.KeeperCrank, "KeeperCrank tag byte");
-  assertBuf(data.subarray(1, 3), [1, 0], "KeeperCrank callerIdx");
-  assert(data[3] === 1, "KeeperCrank format_version=1");
-  console.log("✓ encodeKeeperCrank");
-}
-
-// Test TradeNoCpi encoding (21 bytes: tag + u16 + u16 + i128)
-{
-  const data = encodeTradeNoCpi({ lpIdx: 0, userIdx: 1, size: "1000000" });
-  assert(data.length === 21, "TradeNoCpi length");
-  assert(data[0] === IX_TAG.TradeNoCpi, "TradeNoCpi tag byte");
-  assertBuf(data.subarray(1, 3), [0, 0], "TradeNoCpi lpIdx");
-  assertBuf(data.subarray(3, 5), [1, 0], "TradeNoCpi userIdx");
-  console.log("✓ encodeTradeNoCpi");
-}
-
-// Test TradeNoCpi with negative size
-{
-  const data = encodeTradeNoCpi({ lpIdx: 0, userIdx: 1, size: "-1000000" });
-  assert(data.length === 21, "TradeNoCpi negative length");
-  // Verify the i128 encoding of -1000000
-  const sizeBytes = data.subarray(5, 21);
+  assert(data.length === 53, `PermissionlessCrank length: expected 53, got ${data.length}`);
+  assert(data[0] === IX_TAG.PermissionlessCrank, "PermissionlessCrank tag byte = 5");
+  assert(data[1] === CrankAction.FeeSweep, "PermissionlessCrank action = 0 (FeeSweep)");
+  assertBuf(data.subarray(2, 4), [0, 0], "PermissionlessCrank assetIndex=0 LE");
+  // now_slot=1000 LE u64: [0xe8,0x03,0x00,0x00, 0x00,0x00,0x00,0x00]
+  assertBuf(data.subarray(4, 12), [0xe8, 0x03, 0, 0, 0, 0, 0, 0], "PermissionlessCrank nowSlot=1000");
+  // funding_rate_e9 hardcoded 0n (i128 LE = 16 zero bytes) at [12..28]
   assertBuf(
-    sizeBytes,
-    [192, 189, 240, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
-    "TradeNoCpi negative size"
+    data.subarray(12, 28),
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "PermissionlessCrank fundingRateE9=0n (hardcoded)"
   );
-  console.log("✓ encodeTradeNoCpi (negative size)");
+  // close_q=0n (u128 LE = 16 zero bytes) at [28..44]
+  assertBuf(
+    data.subarray(28, 44),
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "PermissionlessCrank closeQ=0"
+  );
+  // fee_bps=0n (u64 LE = 8 zero bytes) at [44..52]
+  assertBuf(data.subarray(44, 52), [0, 0, 0, 0, 0, 0, 0, 0], "PermissionlessCrank feeBps=0");
+  // recovery_reason=0 at [52]
+  assert(data[52] === 0, "PermissionlessCrank recoveryReason=0");
+  console.log("✓ encodePermissionlessCrank (v17 53-byte wire)");
 }
 
-// Test TradeCpi encoding (29 bytes: tag + u16 + u16 + i128 + u64)
+// Test TradeNoCpi encoding (v17 wire: 28 bytes)
+// Wire: tag(1) + asset_index(u16) + size_q(i128) + exec_price(u64) + fee_bps(u64)
+// Total: 1+2+16+8+8 = 35 bytes
 {
-  const data = encodeTradeCpi({ lpIdx: 2, userIdx: 3, size: "-500", limitPriceE6: "50000000" });
-  assert(data.length === 29, "TradeCpi length");
-  assert(data[0] === IX_TAG.TradeCpi, "TradeCpi tag byte");
-  assertBuf(data.subarray(1, 3), [2, 0], "TradeCpi lpIdx");
-  assertBuf(data.subarray(3, 5), [3, 0], "TradeCpi userIdx");
-  console.log("✓ encodeTradeCpi");
+  const data = encodeTradeNoCpi({
+    assetIndex: 1,
+    sizeQ: 1_000_000n,
+    execPrice: 50_000_000_000n,
+    feeBps: 30n,
+  });
+  assert(data.length === 35, `TradeNoCpi v17 length: expected 35, got ${data.length}`);
+  assert(data[0] === IX_TAG.TradeNoCpi, "TradeNoCpi tag byte = 6");
+  // asset_index=1 at [1..3]
+  assertBuf(data.subarray(1, 3), [1, 0], "TradeNoCpi assetIndex=1 LE");
+  // size_q=1_000_000 at [3..19]: 1000000 = 0x0F4240 LE
+  assertBuf(
+    data.subarray(3, 19),
+    [64, 66, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "TradeNoCpi sizeQ=1_000_000"
+  );
+  // exec_price=50_000_000_000 = 0xBA43B7400 LE = [0x00, 0x74, 0x3B, 0xA4, 0x0B, 0, 0, 0]
+  assertBuf(
+    data.subarray(19, 27),
+    [0x00, 0x74, 0x3b, 0xa4, 0x0b, 0, 0, 0],
+    "TradeNoCpi execPrice=50_000_000_000"
+  );
+  // fee_bps=30 at [27..35]
+  assertBuf(data.subarray(27, 35), [30, 0, 0, 0, 0, 0, 0, 0], "TradeNoCpi feeBps=30");
+  console.log("✓ encodeTradeNoCpi (v17 35-byte wire)");
+}
+
+// Test TradeNoCpi with negative size_q
+{
+  const data = encodeTradeNoCpi({
+    assetIndex: 0,
+    sizeQ: -1_000_000n,
+    execPrice: 50_000_000_000n,
+    feeBps: 30n,
+  });
+  assert(data.length === 35, "TradeNoCpi v17 negative length");
+  // size_q=-1_000_000 (i128 LE) at [3..19]
+  assertBuf(
+    data.subarray(3, 19),
+    [192, 189, 240, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+    "TradeNoCpi sizeQ=-1_000_000"
+  );
+  console.log("✓ encodeTradeNoCpi (v17 negative sizeQ)");
+}
+
+// Test TradeCpi encoding (v17 wire)
+// Wire: tag(1) + asset_index(u16) + size_q(i128) + fee_bps(u64) + limit_price(u64)
+// Total: 1+2+16+8+8 = 35 bytes
+{
+  const data = encodeTradeCpi({
+    assetIndex: 2,
+    sizeQ: -500n,
+    feeBps: 20n,
+    limitPrice: 50_000_000_000n,
+  });
+  assert(data.length === 35, `TradeCpi v17 length: expected 35, got ${data.length}`);
+  assert(data[0] === IX_TAG.TradeCpi, "TradeCpi tag byte = 10");
+  // asset_index=2 at [1..3]
+  assertBuf(data.subarray(1, 3), [2, 0], "TradeCpi assetIndex=2 LE");
+  // size_q=-500 (i128 LE) at [3..19]
+  const sizeBytes = data.subarray(3, 19);
+  const sizeVal = decI128Le(sizeBytes, 0);
+  assert(sizeVal === -500n, `TradeCpi sizeQ decode: expected -500n, got ${sizeVal}`);
+  // fee_bps=20 at [19..27]
+  assertBuf(data.subarray(19, 27), [20, 0, 0, 0, 0, 0, 0, 0], "TradeCpi feeBps=20");
+  console.log("✓ encodeTradeCpi (v17 35-byte wire)");
 }
 
 // Test LiquidateAtOracle encoding (3 bytes: tag + u16)
@@ -404,10 +494,8 @@ console.log("\nTesting instruction encoders...\n");
 }
 
 // ── TradeCpiV2 ABI tests (PERC-164) ──
-const TRADE_CPI_V2_TAG = 35;
-assert(IX_TAG.TradeCpiV2 === TRADE_CPI_V2_TAG, "TradeCpiV2 IX_TAG parity");
-
-// TradeCpiV2 was removed on-chain. Keep the tag constant for parity, but fail fast client-side.
+// NOTE: In v17, tag 35 is ConfigureEwmaMark (toly). TradeCpiV2 tag (35) was removed
+// from IX_TAG in v17 to avoid the collision. The encoder still throws at runtime.
 {
   let threw = false;
   try { encodeTradeCpiV2({ lpIdx: 2, userIdx: 3, size: "1000000", bump: 254 }); } catch { threw = true; }
@@ -415,106 +503,311 @@ assert(IX_TAG.TradeCpiV2 === TRADE_CPI_V2_TAG, "TradeCpiV2 IX_TAG parity");
   console.log("✓ encodeTradeCpiV2 rejects removed tag");
 }
 
-// ── PERC-608 / PERC-8111: New instruction encoders ──────────────────────────
+// ── v17 convergence: deprecated v12 encoder reject tests ────────────────────
 
-// Test SetOiImbalanceHardBlock (tag=71)
+// v12 encoders that COLLIDE with v17 tags now throw removedInstruction()
 {
-  const data = encodeSetOiImbalanceHardBlock({ thresholdBps: 8_000 });
-  assertBuf(data, [71, 64, 31], "SetOiImbalanceHardBlock(8000) bytes"); // 8000 = 0x1F40 LE = [0x40, 0x1F]
-  assert(data.length === 3, "SetOiImbalanceHardBlock length=3");
-
-  const zero = encodeSetOiImbalanceHardBlock({ thresholdBps: 0 });
-  assertBuf(zero, [71, 0, 0], "SetOiImbalanceHardBlock(0) disables");
-
-  const max = encodeSetOiImbalanceHardBlock({ thresholdBps: 10_000 });
-  assert(max.length === 3, "SetOiImbalanceHardBlock(10000) length=3");
-
   let threw = false;
-  try { encodeSetOiImbalanceHardBlock({ thresholdBps: 10_001 }); } catch { threw = true; }
-  assert(threw, "SetOiImbalanceHardBlock rejects >10_000");
+  try { encodeMintPositionNft({ userIdx: 5 }); } catch { threw = true; }
+  assert(threw, "encodeMintPositionNft rejects (v12 tag 64 = v17 ForceCloseAbandonedAsset)");
 
-  console.log("✓ encodeSetOiImbalanceHardBlock");
+  threw = false;
+  try { encodeTransferPositionOwnership({ userIdx: 7 }); } catch { threw = true; }
+  assert(threw, "encodeTransferPositionOwnership rejects (v12 tag 65 = v17 UpdateAssetAuthority)");
+
+  threw = false;
+  try { encodeBurnPositionNft({ userIdx: 12 }); } catch { threw = true; }
+  assert(threw, "encodeBurnPositionNft rejects (v12 tag 66 = v17 BatchTradeNoCpi)");
+
+  threw = false;
+  try { encodeSetPendingSettlement({ userIdx: 3 }); } catch { threw = true; }
+  assert(threw, "encodeSetPendingSettlement rejects (v12 tag 67 = v17 BatchTradeCpi)");
+
+  threw = false;
+  try { encodeClearPendingSettlement({ userIdx: 3 }); } catch { threw = true; }
+  assert(threw, "encodeClearPendingSettlement rejects (v12 tag 68 = v17 SetMatcherConfig)");
+
+  threw = false;
+  try { encodeTransferOwnershipCpi({ userIdx: 2, newOwner: new PublicKey("11111111111111111111111111111111") }); } catch { threw = true; }
+  assert(threw, "encodeTransferOwnershipCpi rejects (v12 tag 69 = v17 RestartAssetOracle)");
+
+  threw = false;
+  try { encodeSetWalletCap({ capE6: 0n }); } catch { threw = true; }
+  assert(threw, "encodeSetWalletCap rejects (v12 tag 70 — not in v17)");
+
+  threw = false;
+  try { encodeSetOiImbalanceHardBlock({ thresholdBps: 8_000 }); } catch { threw = true; }
+  assert(threw, "encodeSetOiImbalanceHardBlock rejects (v12 tag 71 — not in v17)");
+
+  console.log("✓ v12 deprecated encoders (tags 64-71) all throw removedInstruction()");
 }
 
-// Test SetWalletCap (tag=70)
+// ── v17 NEW: UpdateAssetAuthority (tag 65) ────────────────────────────────────
+// Wire: tag(1) + asset_index(u16) + kind(u8) + new_pubkey[32] = 36 bytes
 {
-  const data = encodeSetWalletCap({ capE6: 1_000_000_000n }); // $1K
-  assert(data.length === 9, "SetWalletCap length=9");
-  assert(data[0] === IX_TAG.SetWalletCap, "SetWalletCap tag=70");
-
-  // LE u64: 1_000_000_000 = 0x3B9ACA00 → [0x00, 0xCA, 0x9A, 0x3B, 0, 0, 0, 0]
-  assertBuf(data, [70, 0x00, 0xCA, 0x9A, 0x3B, 0, 0, 0, 0], "SetWalletCap($1K) bytes");
-
-  const disable = encodeSetWalletCap({ capE6: 0n });
-  assertBuf(disable, [70, 0, 0, 0, 0, 0, 0, 0, 0], "SetWalletCap(0) disables");
-
-  console.log("✓ encodeSetWalletCap");
+  const newKey = new PublicKey("11111111111111111111111111111111");
+  const data = encodeUpdateAssetAuthority({
+    assetIndex: 0,
+    kind: ASSET_AUTH_KIND.Insurance,
+    newPubkey: newKey,
+  });
+  assert(data.length === 36, `UpdateAssetAuthority length: expected 36, got ${data.length}`);
+  assert(data[0] === IX_TAG.UpdateAssetAuthority, "UpdateAssetAuthority tag = 65");
+  assertBuf(data.subarray(1, 3), [0, 0], "UpdateAssetAuthority assetIndex=0 LE");
+  assert(data[3] === ASSET_AUTH_KIND.Insurance, "UpdateAssetAuthority kind = Insurance (0)");
+  // new_pubkey at [4..36] = all zeros for system pubkey
+  const pkBytes = newKey.toBytes();
+  assert(
+    data.subarray(4, 36).every((v, i) => v === pkBytes[i]),
+    "UpdateAssetAuthority new_pubkey bytes"
+  );
+  // Test ASSET_AUTH_KIND.AssetAdmin
+  const dataAdmin = encodeUpdateAssetAuthority({
+    assetIndex: 1,
+    kind: ASSET_AUTH_KIND.AssetAdmin,
+    newPubkey: newKey,
+  });
+  assert(dataAdmin[3] === ASSET_AUTH_KIND.AssetAdmin, "UpdateAssetAuthority kind = AssetAdmin (1)");
+  assertBuf(dataAdmin.subarray(1, 3), [1, 0], "UpdateAssetAuthority assetIndex=1 LE");
+  console.log("✓ encodeUpdateAssetAuthority (v17 36-byte wire)");
 }
 
-// Test MintPositionNft (tag=64)
+// ── v17 NEW: BatchTradeNoCpi (tag 66) ────────────────────────────────────────
+// Wire: tag(1) + n_legs(u8) + [asset_index(u16) + size_q(i128) + exec_price(u64) + fee_bps(u64)]×n
+// Per-leg: 2+16+8+8 = 34 bytes; header: 2 bytes; total 1 leg = 36 bytes
 {
-  const data = encodeMintPositionNft({ userIdx: 5 });
-  assert(data.length === 3, "MintPositionNft length=3");
-  assertBuf(data, [64, 5, 0], "MintPositionNft(userIdx=5)");
-  assert(data[0] === IX_TAG.MintPositionNft, "MintPositionNft tag=64");
-  console.log("✓ encodeMintPositionNft");
+  const data = encodeBatchTradeNoCpi({
+    legs: [
+      { assetIndex: 0, sizeQ: 1_000_000n, execPrice: 50_000_000_000n, feeBps: 30n },
+    ],
+  });
+  // 1(tag) + 1(n_legs) + 34(leg) = 36 bytes
+  assert(data.length === 36, `BatchTradeNoCpi 1-leg length: expected 36, got ${data.length}`);
+  assert(data[0] === IX_TAG.BatchTradeNoCpi, "BatchTradeNoCpi tag = 66");
+  assert(data[1] === 1, "BatchTradeNoCpi n_legs=1");
+  assertBuf(data.subarray(2, 4), [0, 0], "BatchTradeNoCpi leg.assetIndex=0 LE");
+  // sizeQ=1_000_000 at [4..20]
+  assertBuf(
+    data.subarray(4, 20),
+    [64, 66, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "BatchTradeNoCpi leg.sizeQ=1_000_000"
+  );
+  // fee_bps=30 at [28..36]
+  assertBuf(data.subarray(28, 36), [30, 0, 0, 0, 0, 0, 0, 0], "BatchTradeNoCpi leg.feeBps=30");
+
+  // 2-leg: 1+1+34+34 = 70 bytes
+  const data2 = encodeBatchTradeNoCpi({
+    legs: [
+      { assetIndex: 0, sizeQ: 1_000_000n, execPrice: 50_000_000_000n, feeBps: 30n },
+      { assetIndex: 1, sizeQ: -500_000n, execPrice: 40_000_000_000n, feeBps: 20n },
+    ],
+  });
+  assert(data2.length === 70, `BatchTradeNoCpi 2-leg length: expected 70, got ${data2.length}`);
+  assert(data2[1] === 2, "BatchTradeNoCpi n_legs=2");
+
+  // Too many legs throws
+  let threw = false;
+  try {
+    encodeBatchTradeNoCpi({ legs: new Array(256).fill({ assetIndex: 0, sizeQ: 0n, execPrice: 0n, feeBps: 0n }) });
+  } catch { threw = true; }
+  assert(threw, "encodeBatchTradeNoCpi rejects > 255 legs");
+
+  console.log("✓ encodeBatchTradeNoCpi (v17)");
 }
 
-// Test TransferPositionOwnership (tag=65)
+// ── v17 NEW: BatchTradeCpi (tag 67) ──────────────────────────────────────────
+// Wire: tag(1) + n_legs(u8) + [asset_index(u16) + size_q(i128) + fee_bps(u64) + limit_price(u64)]×n
+// Per-leg: 2+16+8+8 = 34 bytes; header: 2 bytes; total 1 leg = 36 bytes
 {
-  const data = encodeTransferPositionOwnership({ userIdx: 7 });
-  assert(data.length === 3, "TransferPositionOwnership length=3");
-  assertBuf(data, [65, 7, 0], "TransferPositionOwnership(userIdx=7)");
-  assert(data[0] === IX_TAG.TransferPositionOwnership, "TransferPositionOwnership tag=65");
-  console.log("✓ encodeTransferPositionOwnership");
+  const data = encodeBatchTradeCpi({
+    legs: [
+      { assetIndex: 0, sizeQ: 1_000_000n, feeBps: 30n, limitPrice: 51_000_000_000n },
+    ],
+  });
+  assert(data.length === 36, `BatchTradeCpi 1-leg length: expected 36, got ${data.length}`);
+  assert(data[0] === IX_TAG.BatchTradeCpi, "BatchTradeCpi tag = 67");
+  assert(data[1] === 1, "BatchTradeCpi n_legs=1");
+  assertBuf(data.subarray(2, 4), [0, 0], "BatchTradeCpi leg.assetIndex=0 LE");
+  // sizeQ=1_000_000 at [4..20]
+  assertBuf(
+    data.subarray(4, 20),
+    [64, 66, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "BatchTradeCpi leg.sizeQ=1_000_000"
+  );
+  console.log("✓ encodeBatchTradeCpi (v17)");
 }
 
-// Test BurnPositionNft (tag=66)
+// ── v17 NEW: SetMatcherConfig (tag 68) ────────────────────────────────────────
+// Wire: tag(1) + enabled(u8) = 2 bytes
 {
-  const data = encodeBurnPositionNft({ userIdx: 12 });
-  assert(data.length === 3, "BurnPositionNft length=3");
-  assertBuf(data, [66, 12, 0], "BurnPositionNft(userIdx=12)");
-  assert(data[0] === IX_TAG.BurnPositionNft, "BurnPositionNft tag=66");
-  console.log("✓ encodeBurnPositionNft");
+  const enable = encodeSetMatcherConfig({ enabled: 1 });
+  assertBuf(enable, [68, 1], "SetMatcherConfig(enabled=1)");
+  const disable = encodeSetMatcherConfig({ enabled: 0 });
+  assertBuf(disable, [68, 0], "SetMatcherConfig(enabled=0)");
+  let threw = false;
+  try { encodeSetMatcherConfig({ enabled: 2 }); } catch { threw = true; }
+  assert(threw, "SetMatcherConfig rejects enabled != 0|1");
+  console.log("✓ encodeSetMatcherConfig (v17 2-byte wire)");
 }
 
-// Test SetPendingSettlement (tag=67)
+// ── v17 NEW: RestartAssetOracle (tag 69) ──────────────────────────────────────
+// Wire: tag(1) + asset_index(u16) + now_slot(u64) + initial_price(u64) = 19 bytes
 {
-  const data = encodeSetPendingSettlement({ userIdx: 3 });
-  assert(data.length === 3, "SetPendingSettlement length=3");
-  assertBuf(data, [67, 3, 0], "SetPendingSettlement(userIdx=3)");
-  console.log("✓ encodeSetPendingSettlement");
+  const data = encodeRestartAssetOracle({
+    assetIndex: 0,
+    nowSlot: 1000n,
+    initialPrice: 50_000_000_000n,
+  });
+  assert(data.length === 19, `RestartAssetOracle length: expected 19, got ${data.length}`);
+  assert(data[0] === IX_TAG.RestartAssetOracle, "RestartAssetOracle tag = 69");
+  assertBuf(data.subarray(1, 3), [0, 0], "RestartAssetOracle assetIndex=0 LE");
+  // now_slot=1000 at [3..11]
+  assertBuf(data.subarray(3, 11), [0xe8, 0x03, 0, 0, 0, 0, 0, 0], "RestartAssetOracle nowSlot=1000");
+  console.log("✓ encodeRestartAssetOracle (v17 19-byte wire)");
 }
 
-// Test ClearPendingSettlement (tag=68)
+// ── v17 NEW: WithdrawInsuranceAsset (tag 57) ──────────────────────────────────
+// Wire: tag(1) + asset_index(u16) + amount(u128) = 19 bytes
 {
-  const data = encodeClearPendingSettlement({ userIdx: 3 });
-  assert(data.length === 3, "ClearPendingSettlement length=3");
-  assertBuf(data, [68, 3, 0], "ClearPendingSettlement(userIdx=3)");
-  console.log("✓ encodeClearPendingSettlement");
+  const data = encodeWithdrawInsuranceAsset({ assetIndex: 0, amount: 1_000_000n });
+  assert(data.length === 19, `WithdrawInsuranceAsset length: expected 19, got ${data.length}`);
+  assert(data[0] === IX_TAG.WithdrawInsuranceAsset, "WithdrawInsuranceAsset tag = 57");
+  assertBuf(data.subarray(1, 3), [0, 0], "WithdrawInsuranceAsset assetIndex=0 LE");
+  // amount=1_000_000 at [3..19]
+  assertBuf(
+    data.subarray(3, 19),
+    [64, 66, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "WithdrawInsuranceAsset amount=1_000_000"
+  );
+  console.log("✓ encodeWithdrawInsuranceAsset (v17 19-byte wire)");
 }
 
-// Test TransferOwnershipCpi (tag=69)
+// ── v17 NFT B-3: TransferPortfolioOwnership (tag 72) ──────────────────────────
+// Wire: tag(1) + new_owner[32] + asset_index(u16) = 35 bytes
 {
   const newOwner = new PublicKey("11111111111111111111111111111111");
-  const data = encodeTransferOwnershipCpi({ userIdx: 2, newOwner });
-  assert(data.length === 35, "TransferOwnershipCpi length=35 (tag+u16+pubkey)");
-  assert(data[0] === IX_TAG.TransferOwnershipCpi, "TransferOwnershipCpi tag=69");
-  assert(data[1] === 2 && data[2] === 0, "TransferOwnershipCpi userIdx=2 LE");
-  console.log("✓ encodeTransferOwnershipCpi");
+  const data = encodeTransferPortfolioOwnership({ newOwner, assetIndex: 0 });
+  assert(data.length === 35, `TransferPortfolioOwnership length: expected 35, got ${data.length}`);
+  assert(data[0] === IX_TAG.TransferPortfolioOwnership, "TransferPortfolioOwnership tag = 72");
+  // new_owner at [1..33]
+  const pkBytes = newOwner.toBytes();
+  assert(
+    data.subarray(1, 33).every((v, i) => v === pkBytes[i]),
+    "TransferPortfolioOwnership new_owner bytes"
+  );
+  // asset_index=0 at [33..35]
+  assertBuf(data.subarray(33, 35), [0, 0], "TransferPortfolioOwnership assetIndex=0 LE");
+  console.log("✓ encodeTransferPortfolioOwnership (v17 35-byte wire)");
 }
 
-// Test IX_TAG completeness — verify tags 64–71 all present
+// ── v17 NFT B-3: SetNftProgramId (tag 73) ────────────────────────────────────
+// Wire: tag(1) + nft_program_id[32] = 33 bytes
 {
-  assert(IX_TAG.MintPositionNft === 64, "IX_TAG.MintPositionNft=64");
-  assert(IX_TAG.TransferPositionOwnership === 65, "IX_TAG.TransferPositionOwnership=65");
-  assert(IX_TAG.BurnPositionNft === 66, "IX_TAG.BurnPositionNft=66");
-  assert(IX_TAG.SetPendingSettlement === 67, "IX_TAG.SetPendingSettlement=67");
-  assert(IX_TAG.ClearPendingSettlement === 68, "IX_TAG.ClearPendingSettlement=68");
-  assert(IX_TAG.TransferOwnershipCpi === 69, "IX_TAG.TransferOwnershipCpi=69");
-  assert(IX_TAG.SetWalletCap === 70, "IX_TAG.SetWalletCap=70");
-  assert(IX_TAG.SetOiImbalanceHardBlock === 71, "IX_TAG.SetOiImbalanceHardBlock=71");
-  console.log("✓ IX_TAG completeness (tags 64–71)");
+  const nftProg = new PublicKey("11111111111111111111111111111111");
+  const data = encodeSetNftProgramId({ nftProgramId: nftProg });
+  assert(data.length === 33, `SetNftProgramId length: expected 33, got ${data.length}`);
+  assert(data[0] === IX_TAG.SetNftProgramId, "SetNftProgramId tag = 73");
+  console.log("✓ encodeSetNftProgramId (v17 33-byte wire)");
+}
+
+// ── v17 LP-vault (tags 74-80) ─────────────────────────────────────────────────
+
+// CreateLpVaultV17 (tag 74)
+// Wire: tag(1) + fee_share_bps(u16) + redemption_cooldown_slots(u64) +
+//       oi_reservation_threshold_bps(u16) + domain(u16) = 15 bytes
+{
+  const data = encodeCreateLpVaultV17({
+    feeShareBps: 5000,
+    redemptionCooldownSlots: 21600n,
+    oiReservationThresholdBps: 8000,
+    domain: 0,
+  });
+  assert(data.length === 15, `CreateLpVaultV17 length: expected 15, got ${data.length}`);
+  assert(data[0] === IX_TAG.CreateLpVault, "CreateLpVaultV17 tag = 74");
+  // fee_share_bps=5000=0x1388 LE at [1..3]
+  assertBuf(data.subarray(1, 3), [0x88, 0x13], "CreateLpVaultV17 feeShareBps=5000");
+  console.log("✓ encodeCreateLpVaultV17 (v17 15-byte wire)");
+}
+
+// DepositToLpVault (tag 75)
+// Wire: tag(1) + amount(u128) = 17 bytes
+{
+  const data = encodeDepositToLpVault({ amount: 1_000_000n });
+  assert(data.length === 17, `DepositToLpVault length: expected 17, got ${data.length}`);
+  assert(data[0] === IX_TAG.DepositToLpVault, "DepositToLpVault tag = 75");
+  assertBuf(
+    data.subarray(1, 17),
+    [64, 66, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "DepositToLpVault amount=1_000_000"
+  );
+  console.log("✓ encodeDepositToLpVault (v17 17-byte wire)");
+}
+
+// RequestRedeemLpShares (tag 76)
+// Wire: tag(1) + shares(u128) = 17 bytes
+{
+  const data = encodeRequestRedeemLpShares({ shares: 500_000n });
+  assert(data.length === 17, `RequestRedeemLpShares length: expected 17, got ${data.length}`);
+  assert(data[0] === IX_TAG.RequestRedeemLpShares, "RequestRedeemLpShares tag = 76");
+  console.log("✓ encodeRequestRedeemLpShares (v17 17-byte wire)");
+}
+
+// ExecuteRedemption (tag 77) — 1 byte
+{
+  const data = encodeExecuteRedemption();
+  assert(data.length === 1, "ExecuteRedemption length=1");
+  assertBuf(data, [77], "ExecuteRedemption tag=77");
+  console.log("✓ encodeExecuteRedemption (v17 1-byte wire)");
+}
+
+// LpVaultCrankFees (tag 78) — 1 byte
+{
+  const data = encodeLpVaultCrankFees();
+  assert(data.length === 1, "LpVaultCrankFees length=1");
+  assertBuf(data, [78], "LpVaultCrankFees tag=78");
+  console.log("✓ encodeLpVaultCrankFees (v17 1-byte wire)");
+}
+
+// SetLpVaultPaused (tag 79) — 2 bytes
+{
+  const pause = encodeSetLpVaultPaused({ paused: 1 });
+  assertBuf(pause, [79, 1], "SetLpVaultPaused(paused=1)");
+  const unpause = encodeSetLpVaultPaused({ paused: 0 });
+  assertBuf(unpause, [79, 0], "SetLpVaultPaused(paused=0)");
+  console.log("✓ encodeSetLpVaultPaused (v17 2-byte wire)");
+}
+
+// CloseLpVault (tag 80) — 1 byte
+{
+  const data = encodeCloseLpVault();
+  assert(data.length === 1, "CloseLpVault length=1");
+  assertBuf(data, [80], "CloseLpVault tag=80");
+  console.log("✓ encodeCloseLpVault (v17 1-byte wire)");
+}
+
+// ── v17 IX_TAG completeness — verify core v17 tags ────────────────────────────
+{
+  assert(IX_TAG.UpdateAssetAuthority === 65, "IX_TAG.UpdateAssetAuthority=65");
+  assert(IX_TAG.BatchTradeNoCpi === 66, "IX_TAG.BatchTradeNoCpi=66");
+  assert(IX_TAG.BatchTradeCpi === 67, "IX_TAG.BatchTradeCpi=67");
+  assert(IX_TAG.SetMatcherConfig === 68, "IX_TAG.SetMatcherConfig=68");
+  assert(IX_TAG.RestartAssetOracle === 69, "IX_TAG.RestartAssetOracle=69");
+  assert(IX_TAG.TransferPortfolioOwnership === 72, "IX_TAG.TransferPortfolioOwnership=72");
+  assert(IX_TAG.SetNftProgramId === 73, "IX_TAG.SetNftProgramId=73");
+  assert(IX_TAG.CreateLpVault === 74, "IX_TAG.CreateLpVault=74");
+  assert(IX_TAG.DepositToLpVault === 75, "IX_TAG.DepositToLpVault=75");
+  assert(IX_TAG.RequestRedeemLpShares === 76, "IX_TAG.RequestRedeemLpShares=76");
+  assert(IX_TAG.ExecuteRedemption === 77, "IX_TAG.ExecuteRedemption=77");
+  assert(IX_TAG.LpVaultCrankFees === 78, "IX_TAG.LpVaultCrankFees=78");
+  assert(IX_TAG.SetLpVaultPaused === 79, "IX_TAG.SetLpVaultPaused=79");
+  assert(IX_TAG.CloseLpVault === 80, "IX_TAG.CloseLpVault=80");
+  assert(IX_TAG.WithdrawInsuranceAsset === 57, "IX_TAG.WithdrawInsuranceAsset=57");
+  // Deprecated v12 aliases still have their collision-documented values
+  assert(IX_TAG.MintPositionNft === 64, "IX_TAG.MintPositionNft=64 (deprecated, collides ForceCloseAbandonedAsset)");
+  assert(IX_TAG.TransferPositionOwnership === 65, "IX_TAG.TransferPositionOwnership=65 (deprecated, collides UpdateAssetAuthority)");
+  assert(IX_TAG.SetWalletCap === 70, "IX_TAG.SetWalletCap=70 (deprecated, not in v17)");
+  assert(IX_TAG.SetOiImbalanceHardBlock === 71, "IX_TAG.SetOiImbalanceHardBlock=71 (deprecated, not in v17)");
+  console.log("✓ v17 IX_TAG completeness (all new v17 tags present)");
 }
 
 console.log("\n✅ All tests passed!");

@@ -1,6 +1,17 @@
 /**
- * Percolator program error definitions.
- * Each error includes a name and actionable guidance.
+ * Percolator v17 program error definitions.
+ *
+ * Source: v16_program.rs PercolatorError enum (lines 174-226 in v17 wrapper).
+ * Ordinals 0-29 = toly base errors; 30-41 = fork LP-vault; 42-46 = fork NFT/B-3.
+ *
+ * INVARIANT: ordinals must NOT be reordered (Rust enum discriminants are
+ * sequential from 0). CI asserts each ordinal in tests/v16_kani.rs.
+ *
+ * v17 breaking changes vs v12.x:
+ *   - Errors 0-29 have completely different names and semantics from v12.
+ *   - Errors 30-41 are LP-vault (moved from v12.x range 30-41 to same ordinals).
+ *   - Errors 42-46 are NFT/B-3 (new in v17).
+ *   - v12.x errors 28-65 are entirely removed.
  */
 interface ErrorInfo {
   name: string;
@@ -8,275 +19,204 @@ interface ErrorInfo {
 }
 
 export const PERCOLATOR_ERRORS: Record<number, ErrorInfo> = {
+  // ── toly base errors (0-29) ─────────────────────────────────────────────────
   0: {
     name: "InvalidMagic",
-    hint: "The slab account has invalid data. Ensure you're using the correct slab address.",
+    hint: "Account magic mismatch — not a v17 percolator account. Check the market group address.",
   },
   1: {
     name: "InvalidVersion",
-    hint: "Slab version mismatch. The program may have been upgraded. Check for CLI updates.",
+    hint: "Account version mismatch. Expected EXPECTED_SLAB_VERSION=16. The program may need upgrading.",
   },
   2: {
     name: "AlreadyInitialized",
-    hint: "This account is already initialized. Use a different account or skip initialization.",
+    hint: "Account is already initialized. Use a different account or check the market group address.",
   },
   3: {
     name: "NotInitialized",
-    hint: "The slab is not initialized. Run 'init-market' first.",
+    hint: "Account is not initialized. Run InitMarket first.",
   },
   4: {
-    name: "InvalidSlabLen",
-    hint: "Slab account has wrong size. Create a new slab account with correct size.",
+    name: "InvalidAccountKind",
+    hint: "Wrong account kind (market group vs portfolio vs insurance-ledger). Check account addresses.",
   },
   5: {
-    name: "InvalidOracleKey",
-    hint: "Oracle account doesn't match config. Check the --oracle parameter matches the market's oracle.",
+    name: "InvalidAccountLen",
+    hint: "Account data length is incorrect. The account may be from a different program version.",
   },
   6: {
-    name: "OracleStale",
-    hint: "Oracle price is too old. Wait for oracle to update or check if oracle is paused.",
+    name: "ExpectedSigner",
+    hint: "Missing required signature. Ensure the correct authority wallet is signing.",
   },
   7: {
-    name: "OracleConfTooWide",
-    hint: "Oracle confidence interval is too wide. Wait for more stable market conditions.",
+    name: "ExpectedWritable",
+    hint: "Account must be marked writable. This is likely a client-side account-list bug.",
   },
   8: {
-    name: "InvalidVaultAta",
-    hint: "Vault token account is invalid. Check the vault account is correctly configured.",
+    name: "Unauthorized",
+    hint: "Not authorized for this operation. Check marketauth or asset_admin authority.",
   },
   9: {
-    name: "InvalidMint",
-    hint: "Token mint doesn't match. Ensure you're using the correct collateral token.",
+    name: "InvalidInstruction",
+    hint: "Unknown instruction tag. The SDK and program versions may be mismatched.",
   },
   10: {
-    name: "ExpectedSigner",
-    hint: "Missing required signature. Ensure the correct wallet is specified with --wallet.",
+    name: "InvalidMint",
+    hint: "Token mint does not match the market's collateral mint.",
   },
   11: {
-    name: "ExpectedWritable",
-    hint: "Account must be writable. This is likely a CLI bug - please report it.",
+    name: "InvalidTokenAccount",
+    hint: "Token account is invalid. Ensure you have a correctly configured ATA.",
   },
   12: {
-    name: "OracleInvalid",
-    hint: "Oracle data is invalid. Check the oracle account is a valid Pyth price feed.",
+    name: "InvalidVaultAccount",
+    hint: "Vault account is invalid or does not match the market vault PDA.",
   },
   13: {
-    name: "EngineInsufficientBalance",
-    hint: "Not enough collateral. Deposit more with 'deposit' before this operation.",
+    name: "InvalidTokenProgram",
+    hint: "Invalid token program. Expected SPL Token or Token-2022.",
   },
   14: {
-    name: "EngineUndercollateralized",
-    hint: "Account is undercollateralized. Deposit more collateral or reduce position size.",
+    name: "EngineInvalidConfig",
+    hint: "Engine config is invalid. A required config field is missing or out of range.",
   },
   15: {
-    name: "EngineUnauthorized",
-    hint: "Not authorized. You must be the account owner or admin for this operation.",
+    name: "EngineArithmeticOverflow",
+    hint: "Arithmetic overflow in engine calculation. Try a smaller amount or position size.",
   },
   16: {
-    name: "EngineInvalidMatchingEngine",
-    hint: "Matcher program/context doesn't match LP config. Check --matcher-program and --matcher-context.",
+    name: "EngineProvenanceMismatch",
+    hint: "Portfolio provenance mismatch — the portfolio was not created for this market group.",
   },
   17: {
-    name: "EnginePnlNotWarmedUp",
-    hint: "PnL not warmed up yet. Wait for the warmup period to complete before trading.",
+    name: "EngineHiddenLeg",
+    hint: "Engine detected a hidden leg (unexpected zero-size outstanding position). Internal error.",
   },
   18: {
-    name: "EngineOverflow",
-    hint: "Numeric overflow in calculation. Try a smaller amount or position size.",
+    name: "EngineInvalidLeg",
+    hint: "Engine received an invalid trade leg. Check asset_index and size.",
   },
   19: {
-    name: "EngineAccountNotFound",
-    hint: "Account not found at this index. Run 'init-user' or 'init-lp' first, or check the index.",
+    name: "EngineStale",
+    hint: "Engine position is stale — the market mark price has not been updated recently.",
   },
   20: {
-    name: "EngineNotAnLPAccount",
-    hint: "Expected an LP account but got a user account. Check the --lp-idx parameter.",
+    name: "EngineBStale",
+    hint: "Engine B-side (batch) position stale. The batch crank needs to run.",
   },
   21: {
-    name: "EnginePositionSizeMismatch",
-    hint: "Position size mismatch between user and LP. This shouldn't happen - please report it.",
+    name: "EngineLockActive",
+    hint: "Engine lock is active — a close or recovery is in progress. Wait for it to complete.",
   },
   22: {
-    name: "EngineRiskReductionOnlyMode",
-    hint: "Market is in risk-reduction mode. Only position-reducing trades are allowed.",
+    name: "EngineNonProgress",
+    hint: "Engine operation made no progress. This usually means a crank was called with nothing to do.",
   },
   23: {
-    name: "EngineAccountKindMismatch",
-    hint: "Wrong account type. User operations require user accounts, LP operations require LP accounts.",
+    name: "EngineRecoveryRequired",
+    hint: "Engine requires a recovery crank before normal operations can resume.",
   },
   24: {
-    name: "InvalidTokenAccount",
-    hint: "Token account is invalid. Ensure you have an ATA for the collateral mint.",
+    name: "EngineCounterOverflow",
+    hint: "Engine counter overflow — too many assets or positions. Contact support.",
   },
   25: {
-    name: "InvalidTokenProgram",
-    hint: "Invalid token program. Ensure SPL Token program is accessible.",
+    name: "EngineCounterUnderflow",
+    hint: "Engine counter underflow — attempted to decrement a zero counter. Internal error.",
   },
   26: {
-    name: "InvalidConfigParam",
-    hint: "Invalid configuration parameter. Check that leverage, fees, and risk thresholds are within allowed ranges.",
+    name: "OracleInvalid",
+    hint: "Oracle data is invalid. Check the oracle account is a valid Pyth PriceUpdateV2 feed.",
   },
   27: {
-    name: "HyperpTradeNoCpiDisabled",
-    hint: "TradeNoCpi is disabled for this market. Use TradeCpi with LP matching instead.",
+    name: "OracleStale",
+    hint: "Oracle price is stale. Wait for the oracle to publish a fresh price.",
   },
   28: {
-    name: "InsuranceMintAlreadyExists",
-    hint: "Insurance LP mint already exists for this market. Cannot recreate.",
+    name: "OracleConfTooWide",
+    hint: "Oracle confidence interval too wide. Wait for more stable market conditions.",
   },
   29: {
-    name: "InsuranceMintNotCreated",
-    hint: "Insurance LP mint has not been created yet. Run CreateInsuranceMint first.",
+    name: "InvalidOracleKey",
+    hint: "Oracle account key does not match the market's configured oracle feed ID.",
   },
+  // ── Fork LP-vault errors (30-41) ─────────────────────────────────────────────
   30: {
-    name: "InsuranceBelowThreshold",
-    hint: "Insurance fund balance is below the required threshold. Deposit more to insurance fund.",
+    name: "LpVaultAlreadyExists",
+    hint: "LP vault already created for this asset domain. Each domain can only have one LP vault.",
   },
   31: {
-    name: "InsuranceZeroAmount",
-    hint: "Insurance deposit/withdrawal amount must be greater than zero.",
+    name: "LpVaultNotFound",
+    hint: "LP vault does not exist for this asset domain. Call CreateLpVault (tag 74) first.",
   },
   32: {
-    name: "InsuranceSupplyMismatch",
-    hint: "Insurance LP token supply doesn't match vault balance. This is an internal error - please report it.",
+    name: "LpVaultPaused",
+    hint: "LP vault is paused. Wait for the vault to be unpaused by the admin.",
   },
   33: {
-    name: "MarketPaused",
-    hint: "This market is currently paused by the admin. Trading, deposits, and withdrawals are disabled.",
+    name: "LpVaultSharesOutstanding",
+    hint: "Cannot close LP vault — shares are still outstanding. All redeemers must exit first.",
   },
   34: {
-    name: "AdminRenounceNotAllowed",
-    hint: "Cannot renounce admin — the market must be RESOLVED first before renouncing admin control.",
+    name: "LpVaultZeroAmount",
+    hint: "LP vault deposit or redemption amount must be greater than zero.",
   },
   35: {
-    name: "InvalidConfirmation",
-    hint: "Invalid confirmation code for RenounceAdmin. This is a safety check — please verify the code.",
+    name: "LpVaultInsufficientShares",
+    hint: "Insufficient LP vault shares to redeem. Check your share balance.",
   },
   36: {
-    name: "InsufficientSeed",
-    hint: "Vault seed balance is below the required minimum (500,000,000 raw tokens). Deposit more tokens to the vault before InitMarket.",
+    name: "LpVaultCooldownActive",
+    hint: "LP vault redemption cooldown is still active. Wait for the cooldown period to elapse.",
   },
   37: {
-    name: "InsufficientDexLiquidity",
-    hint: "DEX pool has insufficient liquidity for safe Hyperp oracle bootstrapping. The quote-side reserves must meet the minimum threshold.",
+    name: "LpVaultOiReservationViolated",
+    hint: "LP vault deposit would violate the OI reservation limit. The vault has insufficient capacity.",
   },
   38: {
-    name: "LpVaultAlreadyExists",
-    hint: "LP vault already created for this market. Each market can only have one LP vault.",
+    name: "LpVaultNoFeesToCrank",
+    hint: "No new fees to distribute to the LP vault. Wait for more trading activity.",
   },
   39: {
-    name: "LpVaultNotCreated",
-    hint: "LP vault not yet created. Call CreateLpVault first before depositing or withdrawing.",
+    name: "LpVaultSupplyMismatch",
+    hint: "LP vault share supply / capital mismatch. Internal invariant violation — please report.",
   },
   40: {
-    name: "LpVaultZeroAmount",
-    hint: "LP vault deposit or withdrawal amount must be greater than zero.",
+    name: "LpVaultAuthorityMismatch",
+    hint: "LP vault authority mismatch. The vault belongs to a different market group or admin.",
   },
   41: {
-    name: "LpVaultSupplyMismatch",
-    hint: "LP vault supply/capital mismatch — LP share supply > 0 but vault capital is 0. This is an internal error — please report it.",
+    name: "LpVaultZeroSharesMinted",
+    hint: "First LP deposit minted zero shares (capital too small relative to existing NAV). Deposit a larger amount.",
   },
+  // ── Fork NFT / B-3 errors (42-46) ────────────────────────────────────────────
   42: {
-    name: "LpVaultWithdrawExceedsAvailable",
-    hint: "LP vault withdrawal exceeds available capital. Some capital is reserved for open interest coverage.",
+    name: "NftRegistryNotFound",
+    hint: "NFT registry not found. Call SetNftProgramId (tag 73) to register the percolator-nft program first.",
   },
   43: {
-    name: "LpVaultInvalidFeeShare",
-    hint: "LP vault fee share basis points out of range. Must be 0–10,000 (0%–100%).",
+    name: "NftPortfolioNotTransferable",
+    hint: "Portfolio is not in a transferable state. Ensure the portfolio has no open positions or pending operations.",
   },
   44: {
-    name: "LpVaultNoNewFees",
-    hint: "No new fees to distribute to LP vault. Wait for more trading activity to accrue fees.",
+    name: "NftTransferSelfOrZero",
+    hint: "Cannot transfer portfolio to the zero address or to the current owner.",
   },
-  // ── PERC-312 / PERC-314 / PERC-315 / PERC-309 / PERC-8111 / PERC-8110 (codes 45–60) ─────────
   45: {
-    name: "SafetyValveDominantSideBlocked",
-    hint: "New position on the dominant side is blocked while the market is rebalancing (safety valve).",
+    name: "NftInvalidMintAuthority",
+    hint: "NFT mint authority mismatch. The percolator-nft program may not match the registered NFT program ID.",
   },
   46: {
-    name: "DisputeWindowClosed",
-    hint: "The dispute window for this resolved market has closed.",
-  },
-  47: {
-    name: "DisputeAlreadyExists",
-    hint: "A dispute already exists for this market — cannot open another.",
-  },
-  48: {
-    name: "MarketNotResolved",
-    hint: "Market is not resolved — cannot dispute an active market.",
-  },
-  49: {
-    name: "NoActiveDispute",
-    hint: "No active dispute found for this market.",
-  },
-  50: {
-    name: "LpCollateralDisabled",
-    hint: "LP collateral is not enabled for this market.",
-  },
-  51: {
-    name: "LpCollateralPositionOpen",
-    hint: "Cannot withdraw LP collateral while a position is still open.",
-  },
-  52: {
-    name: "WithdrawQueueAlreadyExists",
-    hint: "A withdrawal queue entry already exists for this user/market.",
-  },
-  53: {
-    name: "WithdrawQueueNotFound",
-    hint: "No queued withdrawal found for this user/market.",
-  },
-  54: {
-    name: "WithdrawQueueNothingClaimable",
-    hint: "Nothing is claimable from the withdrawal queue this epoch — wait for the next epoch.",
-  },
-  55: {
-    name: "AuditViolation",
-    hint: "Audit crank detected a conservation invariant violation — this is a critical internal error, please report it.",
-  },
-  56: {
-    name: "CrossMarginPairNotFound",
-    hint: "Cross-margin offset pair is not configured for these two slabs.",
-  },
-  57: {
-    name: "CrossMarginAttestationStale",
-    hint: "Cross-margin attestation is stale — too many slots have elapsed since the last attestation.",
-  },
-  58: {
-    name: "WalletPositionCapExceeded",
-    hint: "Trade rejected: the resulting position would exceed the per-wallet position cap (max_wallet_pos_e6) for this market.",
-  },
-  59: {
-    name: "OiImbalanceHardBlock",
-    hint: "Trade rejected: it would increase the OI imbalance (|long_oi − short_oi| / total_oi) beyond the configured hard-block threshold (oi_imbalance_hard_block_bps). Try the opposite side.",
-  },
-  60: {
-    name: "EngineInvalidEntryPrice",
-    hint: "Entry price must be positive when opening a position.",
-  },
-  61: {
-    name: "EngineSideBlocked",
-    hint: "New position blocked — this side is in DrainOnly or ResetPending mode. Wait for the market to stabilise.",
-  },
-  62: {
-    name: "EngineCorruptState",
-    hint: "Engine detected a corrupt state invariant violation — this is a critical internal error, please report it.",
-  },
-  63: {
-    name: "InsuranceFundNotDepleted",
-    hint: "ADL rejected — insurance fund is not fully depleted (balance > 0). ADL is only permitted once insurance is exhausted.",
-  },
-  64: {
-    name: "NoAdlCandidates",
-    hint: "ADL rejected — no eligible candidate positions found for deleveraging.",
-  },
-  65: {
-    name: "BankruptPositionAlreadyClosed",
-    hint: "ADL rejected — the target position is already closed (size == 0). Re-rank and pick a different target.",
+    name: "NftPortfolioProvenance",
+    hint: "Portfolio provenance mismatch for NFT transfer. The portfolio was not created for this market group.",
   },
 };
 
 /**
  * Decode a custom program error code to its info.
+ *
+ * @param code Custom error code from `custom program error: 0x<hex>`.
+ * @returns ErrorInfo with name and hint, or undefined if the code is not recognized.
  */
 export function decodeError(code: number): ErrorInfo | undefined {
   return PERCOLATOR_ERRORS[code];
@@ -284,6 +224,9 @@ export function decodeError(code: number): ErrorInfo | undefined {
 
 /**
  * Get error name from code.
+ *
+ * @param code Custom error code.
+ * @returns Human-readable error name, or "Unknown(<code>)" if not recognized.
  */
 export function getErrorName(code: number): string {
   return PERCOLATOR_ERRORS[code]?.name ?? `Unknown(${code})`;
@@ -291,6 +234,9 @@ export function getErrorName(code: number): string {
 
 /**
  * Get actionable hint for error code.
+ *
+ * @param code Custom error code.
+ * @returns Actionable hint string, or undefined if not recognized.
  */
 export function getErrorHint(code: number): string | undefined {
   return PERCOLATOR_ERRORS[code]?.hint;
@@ -300,11 +246,19 @@ export function getErrorHint(code: number): string | undefined {
 const CUSTOM_ERROR_HEX_MAX_LEN = 8;
 
 /**
- * Parse error from transaction logs.
- * Looks for "Program ... failed: custom program error: 0x..."
+ * Parse a custom program error from transaction logs.
  *
- * Hex capture is bounded (1–8 digits) so pathological logs cannot feed unbounded
- * strings into `parseInt` or produce precision-loss codes above u32.
+ * Looks for "Program ... failed: custom program error: 0x..." in the log lines.
+ * Returns null if no custom error is found.
+ *
+ * @param logs Array of transaction log strings from the RPC response.
+ * @returns Parsed error with code, name, and hint — or null if not found.
+ *
+ * @example
+ * ```ts
+ * const err = parseErrorFromLogs(txResult.meta?.logMessages ?? []);
+ * if (err) console.error(`${err.name}: ${err.hint}`);
+ * ```
  */
 export function parseErrorFromLogs(logs: string[]): {
   code: number;

@@ -487,6 +487,215 @@ export declare function maxAccountIndex(dataLen: number): number;
  */
 export declare function parseAccount(data: Uint8Array, idx: number): Account;
 /**
+ * v17 account magic ("PERCV16\0" as little-endian u64).
+ * Stored at bytes [0..8] of every v17 percolator-owned account.
+ * bytes[0..8] = [0x00, 0x36, 0x31, 0x56, 0x43, 0x52, 0x45, 0x50]
+ */
+export declare const V17_MAGIC = 5784119745589622272n;
+/** v17 account version (u16 at offset 8). */
+export declare const V17_EXPECTED_VERSION = 16;
+/** v17 wrapper config block length (WrapperConfigV16 = 432 bytes). */
+export declare const V17_WRAPPER_CONFIG_LEN = 432;
+/** v17 AssetOracleProfileV16 length (400 bytes). */
+export declare const V17_ASSET_ORACLE_PROFILE_LEN = 400;
+/** v17 header length (16 bytes: magic[8] + version[2] + kind[1] + pad[1] + reserved[4]). */
+export declare const V17_HEADER_LEN = 16;
+/** v17 market group config offset = HEADER_LEN + WRAPPER_CONFIG_LEN = 448. */
+export declare const V17_MARKET_GROUP_OFF: number;
+/**
+ * Parsed WrapperConfigV16 — the 432-byte v17 market config block.
+ *
+ * Field offsets follow SBF alignment (u128 align=8, not 16).
+ * Full offset table (verified against v17 wrapper source v16_program.rs):
+ *   0   marketauth [32]
+ *   32  collateral_mint [32]
+ *   64  secondary_collateral_mint [32]
+ *   96  maintenance_fee_per_slot u128
+ *  112  permissionless_market_init_fee u128
+ *  128  trade_fee_base_bps u64
+ *  136  permissionless_resolve_stale_slots u64
+ *  144  force_close_delay_slots u64
+ *  152  last_good_oracle_slot u64
+ *  160  insurance_withdraw_deposit_remaining u128
+ *  176  insurance_withdraw_max_bps u16
+ *  178  liquidation_cranker_fee_share_bps u16
+ *  180  maintenance_cranker_fee_share_bps u16
+ *  182  backing_trade_fee_bps_long u16
+ *  184  unit_scale u32
+ *  188  conf_filter_bps u16
+ *  190  backing_trade_fee_bps_short u16
+ *  192  insurance_withdraw_deposits_only u8
+ *  193  oracle_mode u8
+ *  194  oracle_leg_count u8
+ *  195  oracle_leg_flags u8
+ *  196  invert u8
+ *  197  _padding0 u8
+ *  198  free_market_slot_count u16
+ *  200  insurance_withdraw_cooldown_slots u64
+ *  208  last_insurance_withdraw_slot u64
+ *  216  max_staleness_secs u64
+ *  224  hybrid_soft_stale_slots u64
+ *  232  mark_ewma_e6 u64
+ *  240  mark_ewma_last_slot u64
+ *  248  mark_ewma_halflife_slots u64
+ *  256  mark_min_fee u64
+ *  264  oracle_target_price_e6 u64
+ *  272  oracle_target_publish_time i64
+ *  280  oracle_leg_feeds [[u8;32];3] (96B)
+ *  376  oracle_leg_prices_e6 [u64;3] (24B)
+ *  400  oracle_leg_publish_times [i64;3] (24B)
+ *  424  backing_trade_fee_policy_count u16
+ *  426  backing_trade_fee_insurance_share_bps_long u16
+ *  428  backing_trade_fee_insurance_share_bps_short u16
+ *  430  fee_redirect_to_market_0_bps u16
+ *  Total: 432
+ */
+export interface WrapperConfigV17 {
+    marketauth: PublicKey;
+    collateralMint: PublicKey;
+    secondaryCollateralMint: PublicKey;
+    maintenanceFeePerSlot: bigint;
+    permissionlessMarketInitFee: bigint;
+    tradeFeeBps: bigint;
+    permissionlessResolveStaleSlots: bigint;
+    forceCloseDelaySlots: bigint;
+    lastGoodOracleSlot: bigint;
+    insuranceWithdrawDepositRemaining: bigint;
+    insuranceWithdrawMaxBps: number;
+    liquidationCrankerFeeShareBps: number;
+    maintenanceCrankerFeeShareBps: number;
+    backingTradeFeeBpsLong: number;
+    unitScale: number;
+    confFilterBps: number;
+    backingTradeFeeBpsShort: number;
+    insuranceWithdrawDepositsOnly: number;
+    oracleMode: number;
+    oracleLegCount: number;
+    oracleLegFlags: number;
+    invert: number;
+    freeMarketSlotCount: number;
+    insuranceWithdrawCooldownSlots: bigint;
+    lastInsuranceWithdrawSlot: bigint;
+    maxStalenessSecs: bigint;
+    hybridSoftStaleSlots: bigint;
+    markEwmaE6: bigint;
+    markEwmaLastSlot: bigint;
+    markEwmaHalflifeSlots: bigint;
+    markMinFee: bigint;
+    oracleTargetPriceE6: bigint;
+    oracleTargetPublishTime: bigint;
+    oracleLegFeeds: PublicKey[];
+    oracleLegPricesE6: bigint[];
+    oracleLegPublishTimes: bigint[];
+    backingTradeFeePolicyCount: number;
+    backingTradeFeeInsuranceShareBpsLong: number;
+    backingTradeFeeInsuranceShareBpsShort: number;
+    feeRedirectToMarket0Bps: number;
+}
+/**
+ * Parse a v17 WrapperConfigV16 block from raw account data.
+ *
+ * The config block starts at offset `configOff` (default: V17_HEADER_LEN = 16).
+ *
+ * IMPORTANT: v17 uses a completely different account structure from v12.x slabs.
+ * This function reads the 432-byte wrapper config block directly. It does NOT
+ * validate the account header magic or version — callers must do that separately.
+ *
+ * @param data      Raw bytes of the market group account.
+ * @param configOff Byte offset where the WrapperConfigV16 block starts (default 16).
+ * @returns Parsed WrapperConfigV17 object.
+ *
+ * @example
+ * ```ts
+ * const accountInfo = await connection.getAccountInfo(marketGroupPubkey);
+ * if (!accountInfo) throw new Error("account not found");
+ * const magic = readU64FromBytes(accountInfo.data, 0);
+ * if (magic !== V17_MAGIC) throw new Error("not a v17 account");
+ * const config = parseWrapperConfigV17(accountInfo.data);
+ * console.log(config.collateralMint.toBase58());
+ * ```
+ */
+export declare function parseWrapperConfigV17(data: Uint8Array, configOff?: number): WrapperConfigV17;
+/**
+ * Parsed AssetOracleProfileV16 — the 400-byte per-asset profile in a v17 asset slot.
+ *
+ * Field offsets (SBF alignment, verified against v16_program.rs AssetOracleProfileV16):
+ *   0   oracle_mode u8
+ *   1   oracle_leg_count u8
+ *   2   oracle_leg_flags u8
+ *   3   invert u8
+ *   4   unit_scale u32
+ *   8   conf_filter_bps u16
+ *  10   backing_trade_fee_bps_long u16
+ *  12   backing_trade_fee_bps_short u16
+ *  14   backing_trade_fee_insurance_share_bps_long u16
+ *  16   backing_trade_fee_insurance_share_bps_short u16
+ *  18   _padding0 [u8;6]
+ *  24   insurance_authority [32]
+ *  56   insurance_operator [32]
+ *  88   backing_bucket_authority [32]
+ * 120   oracle_authority [32]
+ * 152   max_staleness_secs u64
+ * 160   hybrid_soft_stale_slots u64
+ * 168   mark_ewma_e6 u64
+ * 176   mark_ewma_last_slot u64
+ * 184   mark_ewma_halflife_slots u64
+ * 192   mark_min_fee u64
+ * 200   oracle_target_price_e6 u64
+ * 208   oracle_target_publish_time i64
+ * 216   last_good_oracle_slot u64
+ * 224   oracle_leg_feeds [[u8;32];3] (96B)
+ * 320   oracle_leg_prices_e6 [u64;3] (24B)
+ * 344   oracle_leg_publish_times [i64;3] (24B)
+ * 368   asset_admin [32]  ← v17 NEW
+ * Total: 400
+ */
+export interface AssetOracleProfileV17 {
+    oracleMode: number;
+    oracleLegCount: number;
+    oracleLegFlags: number;
+    invert: number;
+    unitScale: number;
+    confFilterBps: number;
+    backingTradeFeeBpsLong: number;
+    backingTradeFeeBpsShort: number;
+    backingTradeFeeInsuranceShareBpsLong: number;
+    backingTradeFeeInsuranceShareBpsShort: number;
+    insuranceAuthority: PublicKey;
+    insuranceOperator: PublicKey;
+    backingBucketAuthority: PublicKey;
+    oracleAuthority: PublicKey;
+    maxStalenessSecs: bigint;
+    hybridSoftStaleSlots: bigint;
+    markEwmaE6: bigint;
+    markEwmaLastSlot: bigint;
+    markEwmaHalflifeSlots: bigint;
+    markMinFee: bigint;
+    oracleTargetPriceE6: bigint;
+    oracleTargetPublishTime: bigint;
+    lastGoodOracleSlot: bigint;
+    oracleLegFeeds: PublicKey[];
+    oracleLegPricesE6: bigint[];
+    oracleLegPublishTimes: bigint[];
+    /** v17 NEW: asset_admin pubkey at offset 368. */
+    assetAdmin: PublicKey;
+}
+/**
+ * Parse a v17 AssetOracleProfileV16 block from raw account data.
+ *
+ * @param data      Raw bytes containing the profile block.
+ * @param profileOff Byte offset where the AssetOracleProfileV16 starts.
+ * @returns Parsed AssetOracleProfileV17 object.
+ */
+export declare function parseAssetOracleProfileV17(data: Uint8Array, profileOff: number): AssetOracleProfileV17;
+/**
+ * Check if a raw account buffer contains a v17 percolator account.
+ *
+ * @param data Raw account bytes.
+ * @returns true if magic == V17_MAGIC and version == V17_EXPECTED_VERSION.
+ */
+export declare function isV17Account(data: Uint8Array): boolean;
+/**
  * Parse all used accounts.
  */
 export declare function parseAllAccounts(data: Uint8Array): {
