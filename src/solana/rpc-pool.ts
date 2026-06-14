@@ -42,7 +42,10 @@ export interface RetryConfig {
   maxDelayMs?: number;
 
   /**
-   * Jitter factor (0–1). Applied as random `[0, jitterFactor * delay]` addition.
+   * Jitter factor (0–1). When non-zero, equal-jitter is applied: the computed
+   * delay `raw` is split at its midpoint and a random value `[half, raw]` is
+   * returned, bounding variance to 50 % of the backoff. Set to `0` to disable
+   * jitter entirely (deterministic backoff).
    * @default 0.25
    */
   jitterFactor?: number;
@@ -159,6 +162,15 @@ export interface RpcPoolConfig {
    * @default true
    */
   verbose?: boolean;
+
+  /**
+   * Time in ms after which a continuously unhealthy endpoint is automatically
+   * restored to healthy so it can be retried. Set to 0 to disable time-based
+   * recovery (the pool will still recover via `maybeRecoverEndpoints` when all
+   * endpoints are exhausted).
+   * @default 60_000
+   */
+  recoveryAfterMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -282,18 +294,22 @@ function isRetryable(err: unknown, codes: number[]): boolean {
   if (!err) return false;
   const msg = err instanceof Error ? err.message : String(err);
   for (const code of codes) {
-    if (msg.includes(String(code))) return true;
+    const pattern = new RegExp(`(?<![0-9])${code}(?![0-9])`);
+    if (pattern.test(msg)) return true;
   }
   // Generic network errors
+  const lower = msg.toLowerCase();
   if (
-    msg.toLowerCase().includes("rate limit") ||
-    msg.toLowerCase().includes("too many requests") ||
-    msg.toLowerCase().includes("econnreset") ||
-    msg.toLowerCase().includes("econnrefused") ||
-    msg.toLowerCase().includes("socket hang up") ||
-    msg.toLowerCase().includes("network") ||
-    msg.toLowerCase().includes("timeout") ||
-    msg.toLowerCase().includes("abort")
+    lower.includes("rate limit") ||
+    lower.includes("too many requests") ||
+    lower.includes("bad gateway") ||
+    lower.includes("service unavailable") ||
+    lower.includes("econnreset") ||
+    lower.includes("econnrefused") ||
+    lower.includes("socket hang up") ||
+    lower.includes("network") ||
+    lower.includes("timeout") ||
+    lower.includes("abort")
   ) {
     return true;
   }
@@ -305,8 +321,9 @@ function computeDelay(attempt: number, config: ResolvedRetryConfig): number {
     config.baseDelayMs * Math.pow(2, attempt),
     config.maxDelayMs,
   );
-  const jitter = Math.floor(Math.random() * raw * config.jitterFactor);
-  return raw + jitter;
+  if (config.jitterFactor === 0) return raw;
+  const half = Math.floor(raw / 2);
+  return half + Math.floor(Math.random() * (raw - half + 1));
 }
 
 function rejectAfter<T>(ms: number, message: string): { promise: Promise<T>; cancel: () => void } {
@@ -358,6 +375,12 @@ interface EndpointState {
   healthy: boolean;
   /** Last probe latency (ms), -1 if never probed. */
   lastLatencyMs: number;
+  /**
+   * Timestamp (ms) when the endpoint was first marked unhealthy in this
+   * failure streak. Cleared on success or manual recovery. Used by the
+   * time-based auto-recovery logic in `selectEndpoint`.
+   */
+  unhealthySince?: number;
 }
 
 /**
@@ -397,6 +420,8 @@ export class RpcPool {
   private readonly retryConfig: ResolvedRetryConfig | null;
   private readonly requestTimeoutMs: number;
   private readonly verbose: boolean;
+  /** Time-based recovery window in ms (0 = disabled). */
+  private readonly recoveryAfterMs: number;
 
   /** Round-robin index tracker. */
   private rrIndex: number = 0;
@@ -416,6 +441,7 @@ export class RpcPool {
     this.retryConfig = resolveRetryConfig(config.retry);
     this.requestTimeoutMs = config.requestTimeoutMs ?? 30_000;
     this.verbose = config.verbose ?? true;
+    this.recoveryAfterMs = config.recoveryAfterMs ?? 60_000;
 
     const commitment = config.commitment ?? "confirmed";
 
@@ -482,17 +508,17 @@ export class RpcPool {
         ]);
 
         // Success — reset failure count
-        timeout.cancel();
         ep.failures = 0;
         ep.healthy = true;
+        ep.unhealthySince = undefined;
         return result;
       } catch (err) {
-        timeout.cancel();
         lastError = err;
         ep.failures++;
 
         if (ep.failures >= RpcPool.UNHEALTHY_THRESHOLD) {
           ep.healthy = false;
+          ep.unhealthySince = ep.unhealthySince ?? Date.now();
           if (this.verbose) {
             console.warn(
               `[RpcPool] Endpoint ${ep.label} marked unhealthy after ${ep.failures} consecutive failures`,
@@ -534,6 +560,8 @@ export class RpcPool {
           const delay = computeDelay(attempt, this.retryConfig);
           await sleep(delay);
         }
+      } finally {
+        timeout.cancel();
       }
     }
 
@@ -587,7 +615,10 @@ export class RpcPool {
         const result = await checkRpcHealth(ep.config.url, timeoutMs);
         ep.lastLatencyMs = result.latencyMs;
         ep.healthy = result.healthy;
-        if (result.healthy) ep.failures = 0;
+        if (result.healthy) {
+          ep.failures = 0;
+          ep.unhealthySince = undefined;
+        }
         result.endpoint = redactUrl(result.endpoint);
         return result;
       }),
@@ -639,6 +670,22 @@ export class RpcPool {
    * Returns -1 if no endpoint is available.
    */
   private selectEndpoint(exclude?: Set<number>): number {
+    // Time-based auto-recovery: restore endpoints that have been unhealthy
+    // for longer than recoveryAfterMs so they can be retried.
+    if (this.recoveryAfterMs > 0) {
+      const now = Date.now();
+      for (const ep of this.endpoints) {
+        if (!ep.healthy && ep.unhealthySince !== undefined && (now - ep.unhealthySince) >= this.recoveryAfterMs) {
+          ep.healthy = true;
+          ep.failures = 0;
+          ep.unhealthySince = undefined;
+          if (this.verbose) {
+            console.warn(`[RpcPool] Endpoint ${ep.label} restored after ${this.recoveryAfterMs}ms recovery window`);
+          }
+        }
+      }
+    }
+
     const healthy = this.endpoints
       .map((ep, i) => ({ ep, i }))
       .filter(({ ep, i }) => ep.healthy && !(exclude?.has(i)));
@@ -681,6 +728,7 @@ export class RpcPool {
       for (const ep of this.endpoints) {
         ep.healthy = true;
         ep.failures = 0;
+        ep.unhealthySince = undefined;
       }
     }
   }

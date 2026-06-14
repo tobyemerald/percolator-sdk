@@ -61,7 +61,7 @@ export declare const ENGINE_MARK_PRICE_OFF = 400;
  * V2 uses ENGINE_OFF=600, BITMAP_OFF=432, ACCOUNT_SIZE=248, postBitmap=18.
  * Sizes overlap with V1D (postBitmap=2) — disambiguation requires reading the version field.
  */
-export declare const SLAB_TIERS_V2: {
+export declare const SLAB_TIERS_V2: Readonly<{
     readonly small: {
         readonly maxAccounts: 256;
         readonly dataSize: 65088;
@@ -74,7 +74,7 @@ export declare const SLAB_TIERS_V2: {
         readonly label: "Large";
         readonly description: "4,096 slots (V2 BPF intermediate)";
     };
-};
+}>;
 /**
  * V1M slab tier sizes — mainnet-deployed V1 program (ESa89R5).
  * ENGINE_OFF=640, BITMAP_OFF=726, ACCOUNT_SIZE=248, postBitmap=18.
@@ -175,18 +175,6 @@ export declare const SLAB_TIERS_V12_19: Record<string, {
     label: string;
     description: string;
 }>;
-/**
- * Detect the slab layout version from the raw account data length.
- * Returns the full SlabLayout descriptor, or null if the size is unrecognised.
- * Checks V12_15, V12_1_EP, V12_1, V_SETDEXPOOL, V1M2, V_ADL, V1M, V0, V1D, V1D-legacy, V1, and V1-legacy sizes.
- *
- * When `data` is provided and the size matches V1D, the version field at offset 8 is read
- * to disambiguate V2 slabs (which produce identical sizes to V1D with postBitmap=2).
- * V2 slabs have version===2 at offset 8 (u32 LE).
- *
- * @param dataLen - The slab account data length in bytes
- * @param data    - Optional raw slab data for version-field disambiguation
- */
 export declare function detectSlabLayout(dataLen: number, data?: Uint8Array): SlabLayout | null;
 /**
  * Legacy detectLayout for backward compat.
@@ -226,10 +214,6 @@ export interface MarketConfig {
     fundingInvScaleNotionalE6: bigint;
     fundingMaxPremiumBps: bigint;
     fundingMaxBpsPerSlot: bigint;
-    /** @deprecated Removed in V12_1 — always 0 */ fundingPremiumWeightBps: bigint;
-    /** @deprecated Removed in V12_1 — always 0 */ fundingSettlementIntervalSlots: bigint;
-    /** @deprecated Removed in V12_1 — always 0 */ fundingPremiumDampeningE6: bigint;
-    /** @deprecated Removed in V12_1 — always 0 */ fundingPremiumMaxBpsPerSlot: bigint;
     threshFloor: bigint;
     threshRiskBps: bigint;
     threshUpdateIntervalSlots: bigint;
@@ -250,6 +234,10 @@ export interface MarketConfig {
     adaptiveMaxFundingBps: bigint;
     marketCreatedSlot: bigint;
     oiRampSlots: bigint;
+    /**
+     * @stub Always 0n — not yet read from the on-chain MarketConfig struct.
+     * Do not use for market-resolution logic until a parser is wired.
+     */
     resolvedSlot: bigint;
     insuranceIsolationBps: number;
     /** PERC-622: Oracle phase (0=Nascent, 1=Growing, 2=Mature) */
@@ -442,7 +430,7 @@ export interface Account {
     /** Creation slot for pending bucket. null on pre-v12.17. */
     pendingCreatedSlot: bigint | null;
 }
-export declare function fetchSlab(connection: Connection, slabPubkey: PublicKey): Promise<Uint8Array>;
+export declare function fetchSlab(connection: Connection, slabPubkey: PublicKey, expectedOwner?: PublicKey): Promise<Uint8Array>;
 export declare const RAMP_START_BPS = 1000n;
 export declare const DEFAULT_OI_RAMP_SLOTS = 432000n;
 export declare function computeEffectiveOiCapBps(config: MarketConfig, currentSlot: bigint): bigint;
@@ -695,6 +683,153 @@ export declare function parseAssetOracleProfileV17(data: Uint8Array, profileOff:
  * @returns true if magic == V17_MAGIC and version == V17_EXPECTED_VERSION.
  */
 export declare function isV17Account(data: Uint8Array): boolean;
+/** Per-leg decoded data returned by parsePortfolioV17. */
+export interface PortfolioLegV17 {
+    active: boolean;
+    assetIndex: number;
+    marketId: bigint;
+    /** 0 = long, 1 = short */
+    side: number;
+    basisPosQ: bigint;
+    aBasis: bigint;
+    kSnap: bigint;
+    fSnap: bigint;
+    epochSnap: bigint;
+    lossWeight: bigint;
+    bSnap: bigint;
+    bRem: bigint;
+    bEpochSnap: bigint;
+    bStale: boolean;
+    stale: boolean;
+}
+/** Per source-domain slot returned by parsePortfolioV17. */
+export interface PortfolioSourceDomainV17 {
+    domain: number;
+    sourceClaimMarketId: bigint;
+    sourceClaimBoundNum: bigint;
+    sourceClaimLienedNum: bigint;
+    sourceClaimCounterpartyLienedNum: bigint;
+    sourceClaimInsuranceLienedNum: bigint;
+    sourceLienEffectiveReserved: bigint;
+    sourceLienCounterpartyBackingNum: bigint;
+    sourceLienInsuranceBackingNum: bigint;
+    sourceLienFeeLastSlot: bigint;
+    sourceClaimImpairedNum: bigint;
+    sourceLienImpairedEffectiveReserved: bigint;
+    sourceLienCapitalAtRiskFeeRevenue: bigint;
+    sourceLienImpairedCapitalAtRiskFeeRevenue: bigint;
+}
+/** Decoded v17 PortfolioAccountV16Account. */
+export interface PortfolioV17 {
+    /** Market group this portfolio belongs to. */
+    marketGroupId: PublicKey;
+    /** Portfolio account identity pubkey (immutable PDA). */
+    portfolioAccountId: PublicKey;
+    /** Owner wallet pubkey from the provenance header. */
+    provenanceOwner: PublicKey;
+    /** Portfolio owner (matches provenanceOwner for valid accounts). */
+    owner: PublicKey;
+    /** Collateral capital in atoms (u128). */
+    capital: bigint;
+    /** Unrealised P&L in atoms (i128). */
+    pnl: bigint;
+    /** Capital reserved for pending payout (u128). */
+    reservedPnl: bigint;
+    /** Genesis farming: cumulative crystallized loss atoms (u128). */
+    residualCrystallizedLossAtomsTotal: bigint;
+    /** Genesis farming: cumulative spent principal atoms (u128). */
+    residualSpentPrincipalAtomsTotal: bigint;
+    /** Genesis farming: cumulative received atoms (u128). */
+    residualReceivedAtomsTotal: bigint;
+    /** Fee credits (i128, can be negative). */
+    feeCredits: bigint;
+    /** Cancel-deposit escrow holding (u128). */
+    cancelDepositEscrow: bigint;
+    /** Slot when fees were last accrued. */
+    lastFeeSlot: bigint;
+    /** Bitmap of active leg slots (one u64 word for 16-asset portfolios). */
+    activeBitmap: bigint;
+    /** All 16 position leg slots (active or empty). */
+    legs: PortfolioLegV17[];
+    /** Up to 32 source-domain entries (sparse; unoccupied slots have domain=0 and all-zero fields). */
+    sourceDomains: PortfolioSourceDomainV17[];
+}
+/**
+ * Parse a v17 PortfolioAccountV16Account from raw account data.
+ * Total account size: HEADER_LEN(16) + sizeof(PortfolioAccountV16Account).
+ *
+ * @param data - Raw account bytes from `connection.getAccountInfo`.
+ * @returns Decoded portfolio state.
+ * @throws If data is too short or magic does not match.
+ *
+ * @example
+ * ```typescript
+ * const info = await connection.getAccountInfo(portfolioPubkey);
+ * const portfolio = parsePortfolioV17(new Uint8Array(info!.data));
+ * console.log('capital:', portfolio.capital);
+ * ```
+ */
+export declare function parsePortfolioV17(data: Uint8Array): PortfolioV17;
+/** Decoded v17 LpVaultRegistryV16 account. */
+export interface LpVaultRegistryV17 {
+    marketGroup: PublicKey;
+    lpMint: PublicKey;
+    totalLpSharesOutstanding: bigint;
+    insuranceFeeSnapshotAtoms: bigint;
+    feeDistributionTotalAtoms: bigint;
+    epoch: bigint;
+    redemptionCooldownSlots: bigint;
+    feeShareBps: number;
+    oiReservationThresholdBps: number;
+    domain: number;
+    paused: boolean;
+    version: number;
+    bump: number;
+    mintBump: number;
+}
+/**
+ * Parse a v17 LpVaultRegistryV16 account from raw bytes.
+ * Total account size: 176 bytes (HEADER_LEN=16 + struct=160).
+ *
+ * @param data - Raw account bytes.
+ * @returns Decoded LP vault registry state.
+ * @throws If data is shorter than 176 bytes.
+ *
+ * @example
+ * ```typescript
+ * const info = await connection.getAccountInfo(registryPubkey);
+ * const registry = parseLpVaultRegistry(new Uint8Array(info!.data));
+ * console.log('totalShares:', registry.totalLpSharesOutstanding);
+ * ```
+ */
+export declare function parseLpVaultRegistry(data: Uint8Array): LpVaultRegistryV17;
+/** Decoded v17 LpRedemptionV16 account. */
+export interface LpRedemptionV17 {
+    registry: PublicKey;
+    redeemer: PublicKey;
+    /** LP shares requested for redemption (u128). */
+    shares: bigint;
+    /** Slot when RequestRedeemLpShares was called. */
+    requestSlot: bigint;
+    version: number;
+    bump: number;
+}
+/**
+ * Parse a v17 LpRedemptionV16 account from raw bytes.
+ * Total account size: 112 bytes (HEADER_LEN=16 + struct=96).
+ *
+ * @param data - Raw account bytes.
+ * @returns Decoded LP redemption request state.
+ * @throws If data is shorter than 112 bytes.
+ *
+ * @example
+ * ```typescript
+ * const info = await connection.getAccountInfo(redemptionPubkey);
+ * const redemption = parseLpRedemption(new Uint8Array(info!.data));
+ * console.log('shares:', redemption.shares, 'slot:', redemption.requestSlot);
+ * ```
+ */
+export declare function parseLpRedemption(data: Uint8Array): LpRedemptionV17;
 /**
  * Parse all used accounts.
  */

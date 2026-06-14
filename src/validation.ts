@@ -14,24 +14,6 @@ const U128_MAX = (1n << 128n) - 1n;
 const I128_MIN = -(1n << 127n);
 const I128_MAX = (1n << 127n) - 1n;
 
-/**
- * Non-empty trimmed string of decimal digits only: `"0"` or `[1-9]\\d*` (no leading zeros
- * except a single zero). Rejects fractions, scientific notation, hex prefixes, and trailing junk.
- */
-function requireDecimalUIntString(value: string, field: string): string {
-  const t = value.trim();
-  if (t === "") {
-    throw new ValidationError(field, `"${value}" is not a valid number`);
-  }
-  if (!/^(0|[1-9]\d*)$/.test(t)) {
-    throw new ValidationError(
-      field,
-      `"${value}" is not a valid non-negative integer (use decimal digits only, e.g. 123).`
-    );
-  }
-  return t;
-}
-
 export class ValidationError extends Error {
   constructor(
     public readonly field: string,
@@ -40,6 +22,69 @@ export class ValidationError extends Error {
     super(`Invalid ${field}: ${message}`);
     this.name = "ValidationError";
   }
+}
+
+/**
+ * Regex that accepts a non-negative decimal integer string: `"0"` or `[1-9]\d*`.
+ * Rejects fractions, scientific notation, hex prefixes, leading zeros, and trailing junk.
+ */
+const DECIMAL_UINT_RE = /^(0|[1-9]\d*)$/;
+
+/**
+ * Regex that accepts a decimal integer string (optionally negative): `-?(0|[1-9]\d*)`.
+ * Rejects fractions, scientific notation, hex prefixes, and trailing junk.
+ */
+const DECIMAL_INT_RE = /^-?(0|[1-9]\d*)$/;
+
+/**
+ * Non-empty trimmed string of decimal digits only: `"0"` or `[1-9]\\d*` (no leading zeros
+ * except a single zero). Rejects fractions, scientific notation, hex prefixes, and trailing junk.
+ *
+ * @param value - The string to validate.
+ * @param field - The field name used in error messages.
+ * @returns The trimmed, validated decimal string.
+ */
+export function requireDecimalUIntString(value: string, field: string): string {
+  const t = value.trim();
+  if (t === "") {
+    throw new ValidationError(field, `"${value}" is not a valid number`);
+  }
+  if (!DECIMAL_UINT_RE.test(t)) {
+    throw new ValidationError(
+      field,
+      `"${value}" is not a valid non-negative integer (use decimal digits only, e.g. 123).`
+    );
+  }
+  return t;
+}
+
+/**
+ * Parse a decimal integer string into a BigInt, rejecting any non-decimal representation
+ * (hex, scientific notation, underscores, fractions, leading zeros).
+ *
+ * Use this instead of the bare `BigInt(val)` cast when the input is user-supplied or
+ * externally-sourced, to prevent silent acceptance of `"0x1"`, `"1e5"`, `"1_000"` etc.
+ *
+ * @param val - The string to parse. May be negative (e.g. `"-42"`).
+ * @param caller - The calling function name, used in the error message.
+ * @returns The parsed BigInt value.
+ * @throws {Error} When `val` does not match the strict decimal integer format.
+ *
+ * @example
+ * safeBigInt("123", "encU64")          // 123n
+ * safeBigInt("-9223372036854775808", "encI64")  // i64 min
+ * safeBigInt("0x1", "encU64")          // throws
+ * safeBigInt("1e5", "encU128")         // throws
+ */
+export function safeBigInt(val: string, caller: string): bigint {
+  const t = val.trim();
+  if (!DECIMAL_INT_RE.test(t)) {
+    throw new Error(
+      `${caller}: "${val}" is not a valid decimal integer ` +
+        `(use plain decimal digits, e.g. 123 or -42; no hex, scientific notation, or underscores).`
+    );
+  }
+  return BigInt(t);
 }
 
 /**

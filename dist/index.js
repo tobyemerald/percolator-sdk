@@ -190,15 +190,15 @@ var IX_TAG = {
    *
    * Wire: tag(1) + asset_index(u16) + kind(u8) + new_pubkey[32] = 36 bytes.
    *
-   * kind values (matches v16_program.rs ASSET_AUTH_* constants):
-   *   0 = INSURANCE       — insurance_authority
-   *   1 = ASSET_ADMIN     — asset_admin (burnable when asset_index != 0)
-   *   2 = BACKING_BUCKET  — backing_bucket_authority
-   *   3 = ORACLE          — oracle_authority
-   *   4 = INSURANCE_OPERATOR — insurance_operator
+   * kind values (matches v16_program.rs ASSET_AUTH_* constants, lines 5246-5250):
+   *   0 = ASSET_ADMIN       — asset_admin (burnable when asset_index != 0)
+   *   1 = INSURANCE         — insurance_authority
+   *   2 = INSURANCE_OPERATOR — insurance_operator
+   *   3 = BACKING_BUCKET    — backing_bucket_authority
+   *   4 = ORACLE            — oracle_authority
    *
-   * NOTE: The stake program uses kind=1 (ASSET_AUTH_INSURANCE=1 maps to the
-   * asset_admin route when targeting asset_index=0). See stake-program docs.
+   * NOTE: The stake program uses kind=0 (ASSET_AUTH_ADMIN) targeting asset_index=0.
+   * See stake-program docs.
    */
   UpdateAssetAuthority: 65,
   /**
@@ -431,94 +431,116 @@ function encodeFeedId(feedId) {
   }
   return bytes;
 }
-var INIT_MARKET_BASE_LEN = 304;
-var INIT_MARKET_EXTENDED_TAIL_LEN_V1 = 66;
-var INIT_MARKET_EXTENDED_TAIL_LEN_V2 = INIT_MARKET_EXTENDED_TAIL_LEN_V1 + 8;
-var DEFAULT_EXTENDED_TAIL = {
-  insuranceWithdrawMaxBps: 0,
-  insuranceWithdrawCooldownSlots: 0n,
-  permissionlessResolveStaleSlots: 0n,
-  fundingHorizonSlots: 500n,
-  fundingKBps: 100n,
-  fundingMaxPremiumBps: 500n,
-  fundingMaxBpsPerSlot: 1000n,
-  markMinFee: 0n,
-  forceCloseDelaySlots: 1n
-};
-function encodeExtendedTail(t) {
-  const v1 = concatBytes(
-    encU16(t.insuranceWithdrawMaxBps),
-    encU64(t.insuranceWithdrawCooldownSlots),
-    encU64(t.permissionlessResolveStaleSlots),
-    encU64(t.fundingHorizonSlots),
-    encU64(t.fundingKBps),
-    encI64(t.fundingMaxPremiumBps),
-    encI64(t.fundingMaxBpsPerSlot),
-    encU64(t.markMinFee),
-    encU64(t.forceCloseDelaySlots)
-  );
-  if (t.maxPriceMoveBpsPerSlot === void 0) {
-    return v1;
-  }
-  const mpm = t.maxPriceMoveBpsPerSlot;
-  const mpmBigint = typeof mpm === "string" ? BigInt(mpm) : mpm;
-  if (mpmBigint === 0n) {
-    throw new Error(
-      "encodeInitMarket: maxPriceMoveBpsPerSlot must be > 0 (the wrapper rejects zero with InvalidConfigParam)"
-    );
-  }
-  return concatBytes(v1, encU64(mpmBigint));
-}
+var INIT_MARKET_V17_LEN = 219;
 function encodeInitMarket(args) {
-  const hMin = args.hMin ?? args.warmupPeriodSlots ?? 0n;
-  const hMax = args.hMax ?? args.warmupPeriodSlots ?? 0n;
-  const header = concatBytes(
+  const isV17Args = "maxPortfolioAssets" in args;
+  let maxPortfolioAssets;
+  let hMin;
+  let hMax;
+  let initialPrice;
+  let minNonzeroMmReq;
+  let minNonzeroImReq;
+  let maintenanceMarginBps;
+  let initialMarginBps;
+  let maxTradingFeeBps;
+  let tradeFeeBaseBps;
+  let liquidationFeeBps;
+  let liquidationFeeCap;
+  let minLiquidationAbs;
+  let maxPriceMoveBpsPerSlot;
+  let maxAccrualDtSlots;
+  let maxAbsFundingE9PerSlot;
+  let minFundingLifetimeSlots;
+  let maxAccountBSettlementChunks;
+  let maxBankruptCloseChunks;
+  let maxBankruptCloseLifetimeSlots;
+  let publicBChunkAtoms;
+  let maintenanceFeePerSlot;
+  if (isV17Args) {
+    const v = args;
+    maxPortfolioAssets = v.maxPortfolioAssets;
+    hMin = v.hMin;
+    hMax = v.hMax;
+    initialPrice = v.initialPrice;
+    minNonzeroMmReq = v.minNonzeroMmReq;
+    minNonzeroImReq = v.minNonzeroImReq;
+    maintenanceMarginBps = v.maintenanceMarginBps;
+    initialMarginBps = v.initialMarginBps;
+    maxTradingFeeBps = v.maxTradingFeeBps;
+    tradeFeeBaseBps = v.tradeFeeBaseBps;
+    liquidationFeeBps = v.liquidationFeeBps;
+    liquidationFeeCap = v.liquidationFeeCap;
+    minLiquidationAbs = v.minLiquidationAbs;
+    maxPriceMoveBpsPerSlot = v.maxPriceMoveBpsPerSlot;
+    maxAccrualDtSlots = v.maxAccrualDtSlots;
+    maxAbsFundingE9PerSlot = v.maxAbsFundingE9PerSlot;
+    minFundingLifetimeSlots = v.minFundingLifetimeSlots;
+    maxAccountBSettlementChunks = v.maxAccountBSettlementChunks;
+    maxBankruptCloseChunks = v.maxBankruptCloseChunks;
+    maxBankruptCloseLifetimeSlots = v.maxBankruptCloseLifetimeSlots;
+    publicBChunkAtoms = v.publicBChunkAtoms;
+    maintenanceFeePerSlot = v.maintenanceFeePerSlot;
+  } else {
+    const v = args;
+    const resolvedHMin = v.hMin ?? v.warmupPeriodSlots ?? 0n;
+    const resolvedHMax = v.hMax ?? v.warmupPeriodSlots ?? 0n;
+    maxPortfolioAssets = typeof v.maxAccounts === "string" ? parseInt(v.maxAccounts, 10) : Number(v.maxAccounts);
+    hMin = resolvedHMin;
+    hMax = resolvedHMax;
+    initialPrice = v.initialMarkPriceE6;
+    minNonzeroMmReq = v.minNonzeroMmReq;
+    minNonzeroImReq = v.minNonzeroImReq;
+    maintenanceMarginBps = v.maintenanceMarginBps;
+    initialMarginBps = v.initialMarginBps;
+    maxTradingFeeBps = v.tradingFeeBps;
+    tradeFeeBaseBps = v.tradingFeeBps;
+    liquidationFeeBps = v.liquidationFeeBps;
+    liquidationFeeCap = v.liquidationFeeCap;
+    minLiquidationAbs = v.minLiquidationAbs;
+    maxPriceMoveBpsPerSlot = v.extendedTail?.maxPriceMoveBpsPerSlot ?? 4n;
+    maxAccrualDtSlots = v.maxCrankStalenessSlots ?? 0n;
+    maxAbsFundingE9PerSlot = v.extendedTail?.fundingMaxBpsPerSlot ?? 1000n;
+    minFundingLifetimeSlots = 0n;
+    maxAccountBSettlementChunks = 0n;
+    maxBankruptCloseChunks = 0n;
+    maxBankruptCloseLifetimeSlots = 0n;
+    publicBChunkAtoms = 0n;
+    maintenanceFeePerSlot = v.maintenanceFeePerSlot;
+  }
+  const data = concatBytes(
     encU8(IX_TAG.InitMarket),
-    encPubkey(args.admin),
-    encPubkey(args.collateralMint),
-    encodeFeedId(args.indexFeedId),
-    encU64(args.maxStalenessSecs),
-    encU16(args.confFilterBps),
-    encU8(args.invert),
-    encU32(args.unitScale),
-    encU64(args.initialMarkPriceE6),
-    encU128(args.maxMaintenanceFeePerSlot ?? 0n)
-  );
-  const riskParamsCommon = concatBytes(
+    encU16(maxPortfolioAssets),
     encU64(hMin),
-    encU64(args.maintenanceMarginBps),
-    encU64(args.initialMarginBps),
-    encU64(args.tradingFeeBps),
-    encU64(args.maxAccounts),
-    encU128(args.newAccountFee),
-    encU128(args.insuranceFloor ?? 0n),
     encU64(hMax),
-    encU64(args.maxCrankStalenessSlots),
-    encU64(args.liquidationFeeBps),
-    encU128(args.liquidationFeeCap),
-    encU64(args.liquidationBufferBps ?? 0n),
-    encU128(args.minLiquidationAbs)
+    encU64(initialPrice),
+    encU128(minNonzeroMmReq),
+    encU128(minNonzeroImReq),
+    encU64(maintenanceMarginBps),
+    encU64(initialMarginBps),
+    encU64(maxTradingFeeBps),
+    encU64(tradeFeeBaseBps),
+    encU64(liquidationFeeBps),
+    encU128(liquidationFeeCap),
+    encU128(minLiquidationAbs),
+    encU64(maxPriceMoveBpsPerSlot),
+    encU64(maxAccrualDtSlots),
+    encU64(maxAbsFundingE9PerSlot),
+    encU64(minFundingLifetimeSlots),
+    encU64(maxAccountBSettlementChunks),
+    encU64(maxBankruptCloseChunks),
+    encU64(maxBankruptCloseLifetimeSlots),
+    encU128(publicBChunkAtoms),
+    encU128(maintenanceFeePerSlot)
   );
-  const riskParamsTail = concatBytes(
-    encU128(args.minNonzeroMmReq),
-    encU128(args.minNonzeroImReq)
-  );
-  const base = concatBytes(header, riskParamsCommon, riskParamsTail);
-  if (base.length !== INIT_MARKET_BASE_LEN) {
+  if (data.length !== INIT_MARKET_V17_LEN) {
     throw new Error(
-      `encodeInitMarket: base payload expected ${INIT_MARKET_BASE_LEN} bytes, got ${base.length}`
+      `encodeInitMarket: expected ${INIT_MARKET_V17_LEN} bytes, got ${data.length}`
     );
   }
-  const tail = encodeExtendedTail(args.extendedTail ?? DEFAULT_EXTENDED_TAIL);
-  if (tail.length !== INIT_MARKET_EXTENDED_TAIL_LEN_V1 && tail.length !== INIT_MARKET_EXTENDED_TAIL_LEN_V2) {
-    throw new Error(
-      `encodeInitMarket: extended tail expected ${INIT_MARKET_EXTENDED_TAIL_LEN_V1} or ${INIT_MARKET_EXTENDED_TAIL_LEN_V2} bytes, got ${tail.length}`
-    );
-  }
-  return concatBytes(base, tail);
+  return data;
 }
-function encodeInitUser(args) {
-  return concatBytes(encU8(IX_TAG.InitUser), encU64(args.feePayment));
+function encodeInitUser(_args) {
+  return new Uint8Array([IX_TAG.InitPortfolio]);
 }
 function encodeInitLP(args) {
   return concatBytes(
@@ -531,15 +553,13 @@ function encodeInitLP(args) {
 function encodeDepositCollateral(args) {
   return concatBytes(
     encU8(IX_TAG.DepositCollateral),
-    encU16(args.userIdx),
-    encU64(args.amount)
+    encU128(args.amount)
   );
 }
 function encodeWithdrawCollateral(args) {
   return concatBytes(
     encU8(IX_TAG.WithdrawCollateral),
-    encU16(args.userIdx),
-    encU64(args.amount)
+    encU128(args.amount)
   );
 }
 var CrankAction = {
@@ -565,13 +585,19 @@ function encodeKeeperCrank(_args) {
   );
 }
 function encodeTradeNoCpi(args) {
-  return concatBytes(
+  const data = concatBytes(
     encU8(IX_TAG.TradeNoCpi),
     encU16(args.assetIndex),
     encI128(args.sizeQ),
     encU64(args.execPrice),
     encU64(args.feeBps)
   );
+  if (data.length !== 35) {
+    throw new Error(
+      `encodeTradeNoCpi: expected 35 bytes (tag+u16+i128+u64+u64), got ${data.length}`
+    );
+  }
+  return data;
 }
 function encodeLiquidateAtOracle(args) {
   return concatBytes(
@@ -579,20 +605,26 @@ function encodeLiquidateAtOracle(args) {
     encU16(args.targetIdx)
   );
 }
-function encodeCloseAccount(args) {
-  return concatBytes(encU8(IX_TAG.CloseAccount), encU16(args.userIdx));
+function encodeCloseAccount(_args) {
+  return new Uint8Array([IX_TAG.ClosePortfolio]);
 }
 function encodeTopUpInsurance(args) {
-  return concatBytes(encU8(IX_TAG.TopUpInsurance), encU64(args.amount));
+  return concatBytes(encU8(IX_TAG.TopUpInsurance), encU128(args.amount));
 }
 function encodeTradeCpi(args) {
-  return concatBytes(
+  const data = concatBytes(
     encU8(IX_TAG.TradeCpi),
     encU16(args.assetIndex),
     encI128(args.sizeQ),
     encU64(args.feeBps),
     encU64(args.limitPrice)
   );
+  if (data.length !== 35) {
+    throw new Error(
+      `encodeTradeCpi: expected 35 bytes (tag+u16+i128+u64+u64), got ${data.length}`
+    );
+  }
+  return data;
 }
 function encodeTradeCpiV2(_args) {
   return removedInstruction("TradeCpiV2", IX_TAG.TradeCpiV, "encodeTradeCpi()");
@@ -620,12 +652,11 @@ function encodeSetOraclePriceCap(_args) {
 }
 var RESOLVE_MODE_ORDINARY = 0;
 var RESOLVE_MODE_DEGENERATE = 1;
-function encodeResolveMarket(args = {}) {
-  const mode = args.mode ?? RESOLVE_MODE_ORDINARY;
-  return concatBytes(encU8(IX_TAG.ResolveMarket), encU8(mode));
+function encodeResolveMarket(_args = {}) {
+  return new Uint8Array([IX_TAG.ResolveMarket]);
 }
-function encodeWithdrawInsurance() {
-  return encU8(IX_TAG.WithdrawInsurance);
+function encodeWithdrawInsurance(args) {
+  return concatBytes(encU8(IX_TAG.WithdrawInsurance), encU128(args.amount));
 }
 function encodeAdminForceClose(_args) {
   return removedInstruction("AdminForceClose (v12 tag 17 \u2014 not in v17)", IX_TAG.AdminForceClose, "encodeForceCloseAbandonedAsset() if applicable");
@@ -988,8 +1019,7 @@ function encodeDepositFeeCredits(_args) {
 function encodeConvertReleasedPnl(args) {
   return concatBytes(
     encU8(IX_TAG.ConvertReleasedPnl),
-    encU16(args.userIdx),
-    encU64(args.amount)
+    encU128(args.amount)
   );
 }
 function encodeUpdateAuthority(args) {
@@ -999,11 +1029,16 @@ function encodeUpdateAuthority(args) {
   );
 }
 var ASSET_AUTH_KIND = {
-  Insurance: 0,
-  AssetAdmin: 1,
-  BackingBucket: 2,
-  Oracle: 3,
-  InsuranceOperator: 4
+  /** ASSET_AUTH_ADMIN = 0 in v16_program.rs:5246 — routes to asset_admin field */
+  AssetAdmin: 0,
+  /** ASSET_AUTH_INSURANCE = 1 in v16_program.rs:5247 — routes to insurance_authority field */
+  Insurance: 1,
+  /** ASSET_AUTH_INSURANCE_OPERATOR = 2 in v16_program.rs:5248 — routes to insurance_operator field */
+  InsuranceOperator: 2,
+  /** ASSET_AUTH_BACKING_BUCKET = 3 in v16_program.rs:5249 — routes to backing_bucket_authority field */
+  BackingBucket: 3,
+  /** ASSET_AUTH_ORACLE = 4 in v16_program.rs:5250 — routes to oracle_authority field */
+  Oracle: 4
 };
 Object.freeze(ASSET_AUTH_KIND);
 function encodeUpdateAssetAuthority(args) {
@@ -1127,12 +1162,9 @@ var ACCOUNTS_INIT_MARKET = [
   { name: "systemProgram", signer: false, writable: false }
 ];
 var ACCOUNTS_INIT_USER = [
-  { name: "user", signer: true, writable: true },
-  { name: "slab", signer: false, writable: true },
-  { name: "userAta", signer: false, writable: true },
-  { name: "vault", signer: false, writable: true },
-  { name: "tokenProgram", signer: false, writable: false },
-  { name: "clock", signer: false, writable: false }
+  { name: "owner", signer: true, writable: true },
+  { name: "market", signer: false, writable: true },
+  { name: "portfolio", signer: false, writable: true }
 ];
 var ACCOUNTS_INIT_LP = [
   { name: "user", signer: true, writable: true },
@@ -1143,22 +1175,21 @@ var ACCOUNTS_INIT_LP = [
   { name: "clock", signer: false, writable: false }
 ];
 var ACCOUNTS_DEPOSIT_COLLATERAL = [
-  { name: "user", signer: true, writable: true },
-  { name: "slab", signer: false, writable: true },
-  { name: "userAta", signer: false, writable: true },
-  { name: "vault", signer: false, writable: true },
-  { name: "tokenProgram", signer: false, writable: false },
-  { name: "clock", signer: false, writable: false }
+  { name: "owner", signer: true, writable: true },
+  { name: "market", signer: false, writable: true },
+  { name: "portfolio", signer: false, writable: true },
+  { name: "sourceToken", signer: false, writable: true },
+  { name: "vaultToken", signer: false, writable: true },
+  { name: "tokenProgram", signer: false, writable: false }
 ];
 var ACCOUNTS_WITHDRAW_COLLATERAL = [
-  { name: "user", signer: true, writable: true },
-  { name: "slab", signer: false, writable: true },
-  { name: "vault", signer: false, writable: true },
-  { name: "userAta", signer: false, writable: true },
-  { name: "vaultPda", signer: false, writable: false },
-  { name: "tokenProgram", signer: false, writable: false },
-  { name: "clock", signer: false, writable: false },
-  { name: "oracleIdx", signer: false, writable: false }
+  { name: "owner", signer: true, writable: true },
+  { name: "market", signer: false, writable: true },
+  { name: "portfolio", signer: false, writable: true },
+  { name: "destToken", signer: false, writable: true },
+  { name: "vaultToken", signer: false, writable: true },
+  { name: "vaultAuthority", signer: false, writable: false },
+  { name: "tokenProgram", signer: false, writable: false }
 ];
 var ACCOUNTS_KEEPER_CRANK = [
   { name: "caller", signer: true, writable: true },
@@ -1166,12 +1197,21 @@ var ACCOUNTS_KEEPER_CRANK = [
   { name: "clock", signer: false, writable: false },
   { name: "oracle", signer: false, writable: false }
 ];
+var ACCOUNTS_PERMISSIONLESS_CRANK_BASE = [
+  { name: "owner", signer: true, writable: true },
+  { name: "market", signer: false, writable: true },
+  { name: "portfolio", signer: false, writable: true }
+];
+var ACCOUNTS_RESTART_ASSET_ORACLE = [
+  { name: "authority", signer: true, writable: false },
+  { name: "market", signer: false, writable: true }
+];
 var ACCOUNTS_TRADE_NOCPI = [
-  { name: "user", signer: true, writable: true },
-  { name: "lp", signer: true, writable: true },
-  { name: "slab", signer: false, writable: true },
-  { name: "clock", signer: false, writable: false },
-  { name: "oracle", signer: false, writable: false }
+  { name: "signerA", signer: true, writable: true },
+  { name: "signerB", signer: true, writable: true },
+  { name: "market", signer: false, writable: true },
+  { name: "accountA", signer: false, writable: true },
+  { name: "accountB", signer: false, writable: true }
 ];
 var ACCOUNTS_LIQUIDATE_AT_ORACLE = [
   { name: "unused", signer: false, writable: false },
@@ -1180,33 +1220,25 @@ var ACCOUNTS_LIQUIDATE_AT_ORACLE = [
   { name: "oracle", signer: false, writable: false }
 ];
 var ACCOUNTS_CLOSE_ACCOUNT = [
-  { name: "user", signer: true, writable: true },
-  { name: "slab", signer: false, writable: true },
-  { name: "vault", signer: false, writable: true },
-  { name: "userAta", signer: false, writable: true },
-  { name: "vaultPda", signer: false, writable: false },
-  { name: "tokenProgram", signer: false, writable: false },
-  { name: "clock", signer: false, writable: false },
-  { name: "oracle", signer: false, writable: false }
+  { name: "owner", signer: true, writable: true },
+  { name: "market", signer: false, writable: true },
+  { name: "portfolio", signer: false, writable: true }
 ];
 var ACCOUNTS_TOPUP_INSURANCE = [
-  { name: "user", signer: true, writable: true },
-  { name: "slab", signer: false, writable: true },
-  { name: "userAta", signer: false, writable: true },
-  { name: "vault", signer: false, writable: true },
-  { name: "tokenProgram", signer: false, writable: false },
-  { name: "clock", signer: false, writable: false }
+  { name: "signer", signer: true, writable: true },
+  { name: "market", signer: false, writable: true },
+  { name: "sourceToken", signer: false, writable: true },
+  { name: "vaultToken", signer: false, writable: true },
+  { name: "tokenProgram", signer: false, writable: false }
 ];
 var ACCOUNTS_TRADE_CPI = [
-  { name: "user", signer: true, writable: true },
-  { name: "lpOwner", signer: false, writable: false },
-  // LP delegated to matcher - no signature needed
-  { name: "slab", signer: false, writable: true },
-  { name: "clock", signer: false, writable: false },
-  { name: "oracle", signer: false, writable: false },
+  { name: "signerA", signer: true, writable: false },
+  { name: "market", signer: false, writable: true },
+  { name: "accountA", signer: false, writable: true },
+  { name: "accountB", signer: false, writable: true },
   { name: "matcherProg", signer: false, writable: false },
   { name: "matcherCtx", signer: false, writable: true },
-  { name: "lpPda", signer: false, writable: false }
+  { name: "matcherDelegate", signer: false, writable: false }
 ];
 var ACCOUNTS_SET_RISK_THRESHOLD = [
   { name: "admin", signer: true, writable: true },
@@ -1249,12 +1281,12 @@ var ACCOUNTS_RESOLVE_MARKET = [
   { name: "oracle", signer: false, writable: false }
 ];
 var ACCOUNTS_WITHDRAW_INSURANCE = [
-  { name: "admin", signer: true, writable: true },
-  { name: "slab", signer: false, writable: true },
-  { name: "adminAta", signer: false, writable: true },
-  { name: "vault", signer: false, writable: true },
-  { name: "tokenProgram", signer: false, writable: false },
-  { name: "vaultPda", signer: false, writable: false }
+  { name: "authority", signer: true, writable: true },
+  { name: "market", signer: false, writable: true },
+  { name: "destToken", signer: false, writable: true },
+  { name: "vaultToken", signer: false, writable: true },
+  { name: "vaultAuthority", signer: false, writable: false },
+  { name: "tokenProgram", signer: false, writable: false }
 ];
 var ACCOUNTS_WITHDRAW_INSURANCE_LIMITED_RESOLVED = [
   { name: "authority", signer: true, writable: true },
@@ -1464,28 +1496,29 @@ var ACCOUNTS_UPDATE_HYPERP_MARK = [
 ];
 var ACCOUNTS_CREATE_LP_VAULT = [
   { name: "admin", signer: true, writable: true },
-  { name: "slab", signer: false, writable: true },
-  { name: "lpVaultState", signer: false, writable: true },
-  { name: "lpVaultMint", signer: false, writable: true },
-  { name: "vaultAuthority", signer: false, writable: false },
+  { name: "market", signer: false, writable: false },
+  { name: "registry", signer: false, writable: true },
+  { name: "lpMint", signer: false, writable: true },
   { name: "systemProgram", signer: false, writable: false },
-  { name: "tokenProgram", signer: false, writable: false },
-  { name: "rent", signer: false, writable: false }
+  { name: "tokenProgram", signer: false, writable: false }
 ];
 var ACCOUNTS_LP_VAULT_DEPOSIT = [
   { name: "depositor", signer: true, writable: true },
-  { name: "slab", signer: false, writable: true },
-  { name: "depositorAta", signer: false, writable: true },
-  { name: "vault", signer: false, writable: true },
-  { name: "tokenProgram", signer: false, writable: false },
-  { name: "lpVaultMint", signer: false, writable: true },
+  { name: "market", signer: false, writable: true },
+  { name: "registry", signer: false, writable: true },
+  { name: "lpMint", signer: false, writable: true },
   { name: "depositorLpAta", signer: false, writable: true },
-  { name: "vaultAuthority", signer: false, writable: false },
-  { name: "lpVaultState", signer: false, writable: true }
+  { name: "sourceToken", signer: false, writable: true },
+  { name: "vaultToken", signer: false, writable: true },
+  { name: "ledger", signer: false, writable: true },
+  { name: "tokenProgram", signer: false, writable: false },
+  { name: "systemProgram", signer: false, writable: false }
 ];
 var ACCOUNTS_LP_VAULT_CRANK_FEES = [
-  { name: "slab", signer: false, writable: true },
-  { name: "lpVaultState", signer: false, writable: true }
+  { name: "cranker", signer: true, writable: false },
+  { name: "market", signer: false, writable: true },
+  { name: "registry", signer: false, writable: true },
+  { name: "ledger", signer: false, writable: true }
 ];
 var ACCOUNTS_CHALLENGE_SETTLEMENT = [
   { name: "challenger", signer: true, writable: true },
@@ -1835,6 +1868,8 @@ var PERCOLATOR_ERRORS = {
     hint: "Portfolio provenance mismatch for NFT transfer. The portfolio was not created for this market group."
   }
 };
+for (const v of Object.values(PERCOLATOR_ERRORS)) Object.freeze(v);
+Object.freeze(PERCOLATOR_ERRORS);
 function decodeError(code) {
   return PERCOLATOR_ERRORS[code];
 }
@@ -1889,19 +1924,23 @@ function safeEnv(key) {
 var PROGRAM_IDS = {
   devnet: {
     percolator: "FxfD37s1AZTeWfFQps9Zpebi2dNQ9QSSDtfMKdbsfKrD",
-    matcher: "GTRgyTDfrMvBubALAqtHuQwT8tbGyXid7svXZKtWfC9k"
+    matcher: "4HcGCsyjAqnFua5ccuXyt8KRRQzKFbGTJkVChpS7Yfzy"
   },
   mainnet: {
     percolator: "ESa89R5Es3rJ5mnwGybVRG1GrNt9etP11Z5V2QWD4edv",
     matcher: "GDK8wx38kpiSVSfGTVNiSdptX3Z5R4kQyqh6Q3QX6wmi"
   }
 };
+Object.freeze(PROGRAM_IDS.devnet);
+Object.freeze(PROGRAM_IDS.mainnet);
+Object.freeze(PROGRAM_IDS);
 var PROGRAM_IDS_V17 = {
   /** v17 wrapper placeholder (declare_id! value from v16_program.rs). */
   percolator: "Perco1ator111111111111111111111111111111111",
   /** v17 stake placeholder. */
   stake: "Per5taTe111111111111111111111111111111111111"
 };
+Object.freeze(PROGRAM_IDS_V17);
 var PROGRAM_ID_V17 = new PublicKey3(PROGRAM_IDS_V17.percolator);
 function getProgramId(network) {
   const override = safeEnv("PROGRAM_ID");
@@ -2168,6 +2207,7 @@ var V1_ENGINE_EMERGENCY_START_SLOT_OFF = 640;
 var V1_ENGINE_LAST_BREAKER_SLOT_OFF = 648;
 var V1_ENGINE_BITMAP_OFF = 656;
 var V1_LEGACY_ENGINE_BITMAP_OFF_ACTUAL = 672;
+var V1_LEGACY_ACCT_OWNER_OFF = 200;
 var V1D_CONFIG_LEN = 320;
 var V1D_ENGINE_OFF = 424;
 var V1D_ACCOUNT_SIZE = 248;
@@ -2612,25 +2652,28 @@ for (const [, n] of [["Micro", 64], ["Small", 256], ["Medium", 1024], ["Large", 
   const total = V12_1_SBF_ENGINE_OFF + accountsOff + n * V12_1_EP_SBF_ACCOUNT_SIZE;
   V12_1_EP_SIZES.set(total, n);
 }
-var SLAB_TIERS_V2 = {
+var SLAB_TIERS_V2 = Object.freeze({
   small: { maxAccounts: 256, dataSize: 65088, label: "Small", description: "256 slots (V2 BPF intermediate)" },
   large: { maxAccounts: 4096, dataSize: 1025568, label: "Large", description: "4,096 slots (V2 BPF intermediate)" }
-};
+});
 var SLAB_TIERS_V1M = {};
 for (const [label, n] of [["Micro", 64], ["Small", 256], ["Medium", 1024], ["Large", 4096]]) {
   const size = computeSlabSize(V1M_ENGINE_OFF, V1M_ENGINE_BITMAP_OFF, V1M_ACCOUNT_SIZE, n, 18);
   SLAB_TIERS_V1M[label.toLowerCase()] = { maxAccounts: n, dataSize: size, label, description: `${n} slots (V1M mainnet)` };
 }
+Object.freeze(SLAB_TIERS_V1M);
 var SLAB_TIERS_V1M2 = {};
 for (const [label, n] of [["Micro", 64], ["Small", 256], ["Medium", 1024], ["Large", 4096]]) {
   const size = computeSlabSize(V1M2_ENGINE_OFF, V1M2_ENGINE_BITMAP_OFF, V1M2_ACCOUNT_SIZE, n, 18);
   SLAB_TIERS_V1M2[label.toLowerCase()] = { maxAccounts: n, dataSize: size, label, description: `${n} slots (V1M2 mainnet upgraded)` };
 }
+Object.freeze(SLAB_TIERS_V1M2);
 var SLAB_TIERS_V_ADL = {};
 for (const [label, n] of [["Micro", 64], ["Small", 256], ["Medium", 1024], ["Large", 4096]]) {
   const size = computeSlabSize(V_ADL_ENGINE_OFF, V_ADL_ENGINE_BITMAP_OFF, V_ADL_ACCOUNT_SIZE, n, 18);
   SLAB_TIERS_V_ADL[label.toLowerCase()] = { maxAccounts: n, dataSize: size, label, description: `${n} slots (V_ADL PERC-8270)` };
 }
+Object.freeze(SLAB_TIERS_V_ADL);
 function buildLayout(version, maxAccounts, engineOffOverride) {
   const isV0 = version === 0;
   const engineOff = engineOffOverride ?? (isV0 ? V0_ENGINE_OFF : V1_ENGINE_OFF);
@@ -2687,7 +2730,7 @@ function buildLayout(version, maxAccounts, engineOffOverride) {
     engineLastBreakerSlotOff: isV0 ? -1 : V1_ENGINE_LAST_BREAKER_SLOT_OFF,
     engineBitmapOff: actualBitmapOff,
     postBitmap: 18,
-    acctOwnerOff: ACCT_OWNER_OFF,
+    acctOwnerOff: isV1Legacy ? V1_LEGACY_ACCT_OWNER_OFF : ACCT_OWNER_OFF,
     hasInsuranceIsolation: !isV0,
     engineInsuranceIsolatedOff: isV0 ? -1 : 48,
     engineInsuranceIsolationBpsOff: isV0 ? -1 : 64
@@ -3071,16 +3114,19 @@ for (const [label, n] of [["Micro", 64], ["Small", 256], ["Medium", 1024], ["Lar
   const size = computeSlabSize(V_SETDEXPOOL_ENGINE_OFF, V_ADL_ENGINE_BITMAP_OFF, V_ADL_ACCOUNT_SIZE, n, 18);
   SLAB_TIERS_V_SETDEXPOOL[label.toLowerCase()] = { maxAccounts: n, dataSize: size, label, description: `${n} slots (V_SETDEXPOOL PERC-SetDexPool)` };
 }
+Object.freeze(SLAB_TIERS_V_SETDEXPOOL);
 var SLAB_TIERS_V12_1 = {};
 for (const [label, n] of [["Micro", 64], ["Small", 256], ["Medium", 1024], ["Large", 4096]]) {
   const size = computeSlabSize(V12_1_ENGINE_OFF, V12_1_ENGINE_BITMAP_OFF, V12_1_ACCOUNT_SIZE, n, 18);
   SLAB_TIERS_V12_1[label.toLowerCase()] = { maxAccounts: n, dataSize: size, label, description: `${n} slots (v12.1)` };
 }
+Object.freeze(SLAB_TIERS_V12_1);
 var SLAB_TIERS_V12_15 = {};
 for (const [label, n] of [["Micro", 64], ["Small", 256], ["Medium", 1024], ["Medium2048", 2048], ["Large", 4096]]) {
   const size = computeSlabSize(V12_15_ENGINE_OFF, V12_15_ENGINE_BITMAP_OFF, V12_15_ACCOUNT_SIZE, n, 18);
   SLAB_TIERS_V12_15[label.toLowerCase()] = { maxAccounts: n, dataSize: size, label, description: `${n} slots (v12.15)` };
 }
+Object.freeze(SLAB_TIERS_V12_15);
 var SLAB_TIERS_V12_17 = {};
 for (const [label, n] of [["Small", 256], ["Medium", 1024], ["Large", 4096]]) {
   const bitmapBytes = Math.ceil(n / 64) * 8;
@@ -3089,12 +3135,13 @@ for (const [label, n] of [["Small", 256], ["Medium", 1024], ["Large", 4096]]) {
   const size = V12_17_ENGINE_OFF_SBF + accountsOff + n * V12_17_ACCOUNT_SIZE_SBF + V12_17_RISK_BUF_LEN + n * V12_17_GEN_TABLE_ENTRY;
   SLAB_TIERS_V12_17[label.toLowerCase()] = { maxAccounts: n, dataSize: size, label, description: `${n} slots (v12.17)` };
 }
-var SLAB_TIERS_V12_19 = {
+Object.freeze(SLAB_TIERS_V12_17);
+var SLAB_TIERS_V12_19 = Object.freeze({
   micro: { maxAccounts: 64, dataSize: 26872, label: "Micro", description: "64 slots (v12.19, --features micro)" },
   small: { maxAccounts: 256, dataSize: 96784, label: "Small", description: "256 slots (v12.19, --features small) \u2014 deployed mainnet ESa89R5..." },
   medium: { maxAccounts: 1024, dataSize: 376432, label: "Medium", description: "1024 slots (v12.19, --features medium)" },
   large: { maxAccounts: 4096, dataSize: 1495024, label: "Large", description: "4096 slots (v12.19, default features)" }
-};
+});
 function buildLayoutVSetDexPool(maxAccounts) {
   const engineOff = V_SETDEXPOOL_ENGINE_OFF;
   const bitmapOff = V_ADL_ENGINE_BITMAP_OFF;
@@ -3159,7 +3206,7 @@ function buildLayoutV12_1(maxAccounts, dataLen) {
   const hostSize = computeSlabSize(V12_1_ENGINE_OFF, V12_1_ENGINE_BITMAP_OFF, V12_1_ACCOUNT_SIZE, maxAccounts, 18);
   const isSbf = dataLen !== void 0 && dataLen !== hostSize;
   const engineOff = isSbf ? V12_1_SBF_ENGINE_OFF : V12_1_ENGINE_OFF;
-  const bitmapOff = isSbf ? V12_1_SBF_BITMAP_OFF : V12_1_ENGINE_BITMAP_OFF - V12_1_ENGINE_OFF;
+  const bitmapOff = isSbf ? V12_1_SBF_BITMAP_OFF : V12_1_ENGINE_BITMAP_OFF;
   const accountSize = isSbf ? V12_1_ACCOUNT_SIZE_SBF : V12_1_ACCOUNT_SIZE;
   const bitmapWords = Math.ceil(maxAccounts / 64);
   const bitmapBytes = bitmapWords * 8;
@@ -3481,13 +3528,27 @@ function buildLayoutV12_17(maxAccounts, dataLen) {
     configMarkEwmaOff: V0_HEADER_LEN + 304
   };
 }
+function validateLayout(layout, dataLen) {
+  if (layout.accountsOff > dataLen) {
+    throw new Error(
+      `validateLayout: accountsOff (${layout.accountsOff}) exceeds data length (${dataLen}) for engineOff=${layout.engineOff} accountSize=${layout.accountSize} maxAccounts=${layout.maxAccounts}`
+    );
+  }
+  const bitmapEnd = layout.engineOff + layout.engineBitmapOff + layout.bitmapWords * 8;
+  if (bitmapEnd > dataLen) {
+    throw new Error(
+      `validateLayout: bitmap region end (${bitmapEnd}) exceeds data length (${dataLen})`
+    );
+  }
+  return layout;
+}
 function detectSlabLayout(dataLen, data) {
   const v1219n = V12_19_SIZES.get(dataLen);
-  if (v1219n !== void 0) return buildLayoutV12_19(v1219n, dataLen);
+  if (v1219n !== void 0) return validateLayout(buildLayoutV12_19(v1219n, dataLen), dataLen);
   const v1217n = V12_17_SIZES.get(dataLen);
-  if (v1217n !== void 0) return buildLayoutV12_17(v1217n, dataLen);
+  if (v1217n !== void 0) return validateLayout(buildLayoutV12_17(v1217n, dataLen), dataLen);
   const v1215n = V12_15_SIZES.get(dataLen);
-  if (v1215n !== void 0) return buildLayoutV12_15(v1215n, dataLen);
+  if (v1215n !== void 0) return validateLayout(buildLayoutV12_15(v1215n, dataLen), dataLen);
   const v121epn = V12_1_EP_SIZES.get(dataLen);
   if (v121epn !== void 0) return buildLayoutV12_1EP(v121epn);
   const v121n = V12_1_SIZES.get(dataLen);
@@ -3578,10 +3639,15 @@ var AccountKind = /* @__PURE__ */ ((AccountKind2) => {
   AccountKind2[AccountKind2["LP"] = 1] = "LP";
   return AccountKind2;
 })(AccountKind || {});
-async function fetchSlab(connection, slabPubkey) {
+async function fetchSlab(connection, slabPubkey, expectedOwner) {
   const info = await connection.getAccountInfo(slabPubkey);
   if (!info) {
     throw new Error(`Slab account not found: ${slabPubkey.toBase58()}`);
+  }
+  if (expectedOwner && !info.owner.equals(expectedOwner)) {
+    throw new Error(
+      `fetchSlab: account ${slabPubkey.toBase58()} is owned by ${info.owner.toBase58()} but expected ${expectedOwner.toBase58()}`
+    );
   }
   return new Uint8Array(info.data);
 }
@@ -3685,10 +3751,6 @@ function parseConfigV12_17(data, configOff) {
     // removed in v12.17
     fundingMaxPremiumBps,
     fundingMaxBpsPerSlot,
-    fundingPremiumWeightBps: 0n,
-    fundingSettlementIntervalSlots: 0n,
-    fundingPremiumDampeningE6: 0n,
-    fundingPremiumMaxBpsPerSlot: 0n,
     threshFloor: 0n,
     // removed in v12.17
     threshRiskBps: 0n,
@@ -3758,10 +3820,6 @@ function parseConfigV12_19(data, configOff) {
     fundingInvScaleNotionalE6: 0n,
     fundingMaxPremiumBps,
     fundingMaxBpsPerSlot,
-    fundingPremiumWeightBps: 0n,
-    fundingSettlementIntervalSlots: 0n,
-    fundingPremiumDampeningE6: 0n,
-    fundingPremiumMaxBpsPerSlot: 0n,
     threshFloor: 0n,
     threshRiskBps: 0n,
     threshUpdateIntervalSlots: 0n,
@@ -3791,6 +3849,9 @@ function parseConfigV12_19(data, configOff) {
   };
 }
 function parseConfig(data, layoutHint) {
+  if (data.length >= 8 && readU64LE(data, 0) !== MAGIC) {
+    throw new Error("parseConfig: invalid slab magic");
+  }
   const layout = layoutHint !== void 0 ? layoutHint : detectSlabLayout(data.length, data);
   const configOff = layout ? layout.configOffset : V0_HEADER_LEN;
   const configLen = layout ? layout.configLen : V0_CONFIG_LEN;
@@ -3920,10 +3981,6 @@ function parseConfig(data, layoutHint) {
     fundingInvScaleNotionalE6,
     fundingMaxPremiumBps,
     fundingMaxBpsPerSlot,
-    fundingPremiumWeightBps: 0n,
-    fundingSettlementIntervalSlots: 0n,
-    fundingPremiumDampeningE6: 0n,
-    fundingPremiumMaxBpsPerSlot: 0n,
     threshFloor,
     threshRiskBps,
     threshUpdateIntervalSlots,
@@ -4041,9 +4098,15 @@ function parseParams(data, layoutHint) {
   return result;
 }
 function parseEngine(data) {
+  if (data.length >= 8 && readU64LE(data, 0) !== MAGIC) {
+    throw new Error("parseEngine: invalid slab magic");
+  }
   const layout = detectSlabLayout(data.length, data);
   if (!layout) {
     throw new Error(`Unrecognized slab data length: ${data.length}. Cannot determine layout version.`);
+  }
+  if (data.length < layout.accountsOff) {
+    throw new Error(`parseEngine: data too short for accountsOff (${data.length} < ${layout.accountsOff})`);
   }
   const base = layout.engineOff;
   const isV12_17 = layout.accountSize === V12_17_ACCOUNT_SIZE || layout.accountSize === V12_17_ACCOUNT_SIZE_SBF;
@@ -4137,7 +4200,7 @@ function parseEngine(data) {
       isolationBps: layout.hasInsuranceIsolation ? readU16LE(data, base + layout.engineInsuranceIsolationBpsOff) : 0
     },
     currentSlot: readU64LE(data, base + layout.engineCurrentSlotOff),
-    fundingIndexQpbE6: layout.engineFundingIndexOff >= 0 ? readI128LE(data, base + layout.engineFundingIndexOff) : 0n,
+    fundingIndexQpbE6: layout.engineFundingIndexOff >= 0 ? layout.engineLastFundingSlotOff >= 0 && layout.engineLastFundingSlotOff - layout.engineFundingIndexOff === 8 ? BigInt(readI64LE(data, base + layout.engineFundingIndexOff)) : readI128LE(data, base + layout.engineFundingIndexOff) : 0n,
     lastFundingSlot: layout.engineLastFundingSlotOff >= 0 ? readU64LE(data, base + layout.engineLastFundingSlotOff) : 0n,
     fundingRateBpsPerSlotLast,
     fundingRateE9: isV12_15 ? readI128LE(data, base + layout.engineFundingRateBpsOff) : 0n,
@@ -4569,6 +4632,155 @@ function isV17Account(data) {
   const version = readU16LE(data, 8);
   return magic === V17_MAGIC && version === V17_EXPECTED_VERSION;
 }
+var V17_ACCOUNT_HEADER_LEN = 16;
+var PF_PROVENANCE_OFF = V17_ACCOUNT_HEADER_LEN;
+var PF_PROVENANCE_MARKET_GROUP_OFF = PF_PROVENANCE_OFF;
+var PF_PROVENANCE_ACCOUNT_ID_OFF = PF_PROVENANCE_OFF + 32;
+var PF_PROVENANCE_OWNER_OFF = PF_PROVENANCE_OFF + 64;
+var PF_PROVENANCE_VERSION_OFF = PF_PROVENANCE_OFF + 96;
+var PF_PROVENANCE_DISC_OFF = PF_PROVENANCE_OFF + 98;
+var PF_BODY_OFF = PF_PROVENANCE_OFF + 100;
+var PF_OWNER_OFF = PF_BODY_OFF;
+var PF_CAPITAL_OFF = PF_BODY_OFF + 32;
+var PF_PNL_OFF = PF_BODY_OFF + 48;
+var PF_RESERVED_PNL_OFF = PF_BODY_OFF + 64;
+var PF_RESIDUAL_LOSS_OFF = PF_BODY_OFF + 80;
+var PF_RESIDUAL_PRINCIPAL_OFF = PF_BODY_OFF + 96;
+var PF_RESIDUAL_RECEIVED_OFF = PF_BODY_OFF + 112;
+var PF_FEE_CREDITS_OFF = PF_BODY_OFF + 128;
+var PF_CANCEL_ESCROW_OFF = PF_BODY_OFF + 144;
+var PF_LAST_FEE_SLOT_OFF = PF_BODY_OFF + 160;
+var PF_ACTIVE_BITMAP_OFF = PF_BODY_OFF + 168;
+var PF_LEG_SIZE = 144;
+var PF_LEGS_OFF = PF_BODY_OFF + 176;
+var PF_LEGS_COUNT = 16;
+var PF_SOURCE_DOMAIN_SIZE = 196;
+var PF_SOURCE_DOMAINS_OFF = PF_LEGS_OFF + PF_LEGS_COUNT * PF_LEG_SIZE;
+var PF_SOURCE_DOMAINS_CAP = 32;
+var PF_HEALTH_CERT_OFF = PF_SOURCE_DOMAINS_OFF + PF_SOURCE_DOMAINS_CAP * PF_SOURCE_DOMAIN_SIZE;
+function parsePortfolioV17(data) {
+  const MIN_PORTFOLIO_BYTES = PF_BODY_OFF + 16;
+  if (data.length < MIN_PORTFOLIO_BYTES) {
+    throw new Error(`parsePortfolioV17: data too short (${data.length} < ${MIN_PORTFOLIO_BYTES})`);
+  }
+  const marketGroupId = new PublicKey5(data.subarray(PF_PROVENANCE_MARKET_GROUP_OFF, PF_PROVENANCE_MARKET_GROUP_OFF + 32));
+  const portfolioAccountId = new PublicKey5(data.subarray(PF_PROVENANCE_ACCOUNT_ID_OFF, PF_PROVENANCE_ACCOUNT_ID_OFF + 32));
+  const provenanceOwner = new PublicKey5(data.subarray(PF_PROVENANCE_OWNER_OFF, PF_PROVENANCE_OWNER_OFF + 32));
+  const owner = new PublicKey5(data.subarray(PF_OWNER_OFF, PF_OWNER_OFF + 32));
+  const capital = readU128LE(data, PF_CAPITAL_OFF);
+  const pnl = readI128LE(data, PF_PNL_OFF);
+  const reservedPnl = readU128LE(data, PF_RESERVED_PNL_OFF);
+  const residualCrystallizedLossAtomsTotal = data.length >= PF_RESIDUAL_LOSS_OFF + 16 ? readU128LE(data, PF_RESIDUAL_LOSS_OFF) : 0n;
+  const residualSpentPrincipalAtomsTotal = data.length >= PF_RESIDUAL_PRINCIPAL_OFF + 16 ? readU128LE(data, PF_RESIDUAL_PRINCIPAL_OFF) : 0n;
+  const residualReceivedAtomsTotal = data.length >= PF_RESIDUAL_RECEIVED_OFF + 16 ? readU128LE(data, PF_RESIDUAL_RECEIVED_OFF) : 0n;
+  const feeCredits = data.length >= PF_FEE_CREDITS_OFF + 16 ? readI128LE(data, PF_FEE_CREDITS_OFF) : 0n;
+  const cancelDepositEscrow = data.length >= PF_CANCEL_ESCROW_OFF + 16 ? readU128LE(data, PF_CANCEL_ESCROW_OFF) : 0n;
+  const lastFeeSlot = data.length >= PF_LAST_FEE_SLOT_OFF + 8 ? readU64LE(data, PF_LAST_FEE_SLOT_OFF) : 0n;
+  const activeBitmap = data.length >= PF_ACTIVE_BITMAP_OFF + 8 ? readU64LE(data, PF_ACTIVE_BITMAP_OFF) : 0n;
+  const legs = [];
+  for (let i = 0; i < PF_LEGS_COUNT; i++) {
+    const b = PF_LEGS_OFF + i * PF_LEG_SIZE;
+    if (data.length < b + PF_LEG_SIZE) break;
+    legs.push({
+      active: data[b] !== 0,
+      assetIndex: readU32LE(data, b + 1),
+      marketId: readU64LE(data, b + 5),
+      side: data[b + 13],
+      basisPosQ: readI128LE(data, b + 14),
+      aBasis: readU128LE(data, b + 30),
+      kSnap: readI128LE(data, b + 46),
+      fSnap: readI128LE(data, b + 62),
+      epochSnap: readU64LE(data, b + 78),
+      lossWeight: readU128LE(data, b + 86),
+      bSnap: readU128LE(data, b + 102),
+      bRem: readU128LE(data, b + 118),
+      bEpochSnap: readU64LE(data, b + 134),
+      bStale: data[b + 142] !== 0,
+      stale: data[b + 143] !== 0
+    });
+  }
+  const sourceDomains = [];
+  for (let i = 0; i < PF_SOURCE_DOMAINS_CAP; i++) {
+    const b = PF_SOURCE_DOMAINS_OFF + i * PF_SOURCE_DOMAIN_SIZE;
+    if (data.length < b + PF_SOURCE_DOMAIN_SIZE) break;
+    sourceDomains.push({
+      domain: readU32LE(data, b + 0),
+      sourceClaimMarketId: readU64LE(data, b + 4),
+      sourceClaimBoundNum: readU128LE(data, b + 12),
+      sourceClaimLienedNum: readU128LE(data, b + 28),
+      sourceClaimCounterpartyLienedNum: readU128LE(data, b + 44),
+      sourceClaimInsuranceLienedNum: readU128LE(data, b + 60),
+      sourceLienEffectiveReserved: readU128LE(data, b + 76),
+      sourceLienCounterpartyBackingNum: readU128LE(data, b + 92),
+      sourceLienInsuranceBackingNum: readU128LE(data, b + 108),
+      sourceLienFeeLastSlot: readU64LE(data, b + 124),
+      sourceClaimImpairedNum: readU128LE(data, b + 132),
+      sourceLienImpairedEffectiveReserved: readU128LE(data, b + 148),
+      sourceLienCapitalAtRiskFeeRevenue: readU128LE(data, b + 164),
+      sourceLienImpairedCapitalAtRiskFeeRevenue: readU128LE(data, b + 180)
+    });
+  }
+  return {
+    marketGroupId,
+    portfolioAccountId,
+    provenanceOwner,
+    owner,
+    capital,
+    pnl,
+    reservedPnl,
+    residualCrystallizedLossAtomsTotal,
+    residualSpentPrincipalAtomsTotal,
+    residualReceivedAtomsTotal,
+    feeCredits,
+    cancelDepositEscrow,
+    lastFeeSlot,
+    activeBitmap,
+    legs,
+    sourceDomains
+  };
+}
+var LP_VAULT_REGISTRY_TOTAL = 176;
+function parseLpVaultRegistry(data) {
+  if (data.length < LP_VAULT_REGISTRY_TOTAL) {
+    throw new Error(
+      `parseLpVaultRegistry: data too short (${data.length} < ${LP_VAULT_REGISTRY_TOTAL})`
+    );
+  }
+  const b = V17_ACCOUNT_HEADER_LEN;
+  return {
+    marketGroup: new PublicKey5(data.subarray(b + 0, b + 32)),
+    lpMint: new PublicKey5(data.subarray(b + 32, b + 64)),
+    totalLpSharesOutstanding: readU128LE(data, b + 64),
+    insuranceFeeSnapshotAtoms: readU128LE(data, b + 80),
+    feeDistributionTotalAtoms: readU128LE(data, b + 96),
+    epoch: readU64LE(data, b + 112),
+    redemptionCooldownSlots: readU64LE(data, b + 120),
+    feeShareBps: readU16LE(data, b + 128),
+    oiReservationThresholdBps: readU16LE(data, b + 130),
+    domain: readU16LE(data, b + 132),
+    paused: data[b + 134] !== 0,
+    version: data[b + 135],
+    bump: data[b + 136],
+    mintBump: data[b + 137]
+  };
+}
+var LP_REDEMPTION_TOTAL = 112;
+function parseLpRedemption(data) {
+  if (data.length < LP_REDEMPTION_TOTAL) {
+    throw new Error(
+      `parseLpRedemption: data too short (${data.length} < ${LP_REDEMPTION_TOTAL})`
+    );
+  }
+  const b = V17_ACCOUNT_HEADER_LEN;
+  return {
+    registry: new PublicKey5(data.subarray(b + 0, b + 32)),
+    redeemer: new PublicKey5(data.subarray(b + 32, b + 64)),
+    shares: readU128LE(data, b + 64),
+    requestSlot: readU64LE(data, b + 80),
+    version: data[b + 88],
+    bump: data[b + 89]
+  };
+}
 function parseAllAccounts(data) {
   const indices = parseUsedIndices(data);
   const maxIdx = maxAccountIndex(data.length);
@@ -4588,6 +4800,19 @@ function parseAllAccounts(data) {
 // src/solana/pda.ts
 import { PublicKey as PublicKey6 } from "@solana/web3.js";
 var textEncoder = new TextEncoder();
+function u16LE(value) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 65535) {
+    throw new Error(`u16LE: value must be an integer in [0, 65535], got ${value}`);
+  }
+  const buf = new Uint8Array(2);
+  new DataView(buf.buffer).setUint16(
+    0,
+    value,
+    /*littleEndian=*/
+    true
+  );
+  return buf;
+}
 function deriveVaultAuthority(programId, slab) {
   return PublicKey6.findProgramAddressSync(
     [textEncoder.encode("vault"), slab.toBytes()],
@@ -4630,6 +4855,57 @@ var CREATOR_LOCK_SEED = "creator_lock";
 function deriveCreatorLockPda(programId, slab) {
   return PublicKey6.findProgramAddressSync(
     [textEncoder.encode(CREATOR_LOCK_SEED), slab.toBytes()],
+    programId
+  );
+}
+function deriveLpVaultRegistry(programId, marketGroup) {
+  return PublicKey6.findProgramAddressSync(
+    [textEncoder.encode("lp_vault"), marketGroup.toBytes()],
+    programId
+  );
+}
+function deriveLpRedemption(programId, registry, redeemer) {
+  return PublicKey6.findProgramAddressSync(
+    [
+      textEncoder.encode("lp_redemption"),
+      registry.toBytes(),
+      redeemer.toBytes()
+    ],
+    programId
+  );
+}
+function deriveLpBackingLedger(programId, marketGroup, domainIdx) {
+  return PublicKey6.findProgramAddressSync(
+    [
+      textEncoder.encode("lp_backing_ledger"),
+      marketGroup.toBytes(),
+      u16LE(domainIdx)
+    ],
+    programId
+  );
+}
+function deriveLpEscrow(programId, marketGroup) {
+  return PublicKey6.findProgramAddressSync(
+    [textEncoder.encode("lp_escrow"), marketGroup.toBytes()],
+    programId
+  );
+}
+function deriveNftRegistry(programId, marketGroup) {
+  return PublicKey6.findProgramAddressSync(
+    [textEncoder.encode("nft_registry"), marketGroup.toBytes()],
+    programId
+  );
+}
+function deriveMatcherDelegate(programId, market, accountB, accountBOwner, matcherProg, matcherCtx) {
+  return PublicKey6.findProgramAddressSync(
+    [
+      textEncoder.encode("matcher"),
+      market.toBytes(),
+      accountB.toBytes(),
+      accountBOwner.toBytes(),
+      matcherProg.toBytes(),
+      matcherCtx.toBytes()
+    ],
     programId
   );
 }
@@ -4944,16 +5220,16 @@ function parseEngineLight(data, layout, maxAccounts = 4096) {
       nextAccountId: canReadNextId ? readU64LE2(data, base + nextAccountIdOff) : 0n
     };
   }
-  const isVAdl = layout !== null && layout.engineOff === 624 && layout.accountSize === 312;
-  if (isVAdl) {
+  if (layout !== null) {
     const l = layout;
+    const hasInsuranceIsolation = l.engineInsuranceIsolatedOff >= 0 && l.engineInsuranceIsolationBpsOff >= 0;
     return {
       vault: readU128LE2(data, base + 0),
       insuranceFund: {
         balance: readU128LE2(data, base + l.engineInsuranceOff),
         feeRevenue: readU128LE2(data, base + l.engineInsuranceOff + 16),
-        isolatedBalance: readU128LE2(data, base + l.engineInsuranceIsolatedOff),
-        isolationBps: readU16LE2(data, base + l.engineInsuranceIsolationBpsOff)
+        isolatedBalance: hasInsuranceIsolation ? readU128LE2(data, base + l.engineInsuranceIsolatedOff) : 0n,
+        isolationBps: hasInsuranceIsolation ? readU16LE2(data, base + l.engineInsuranceIsolationBpsOff) : 0
       },
       currentSlot: readU64LE2(data, base + l.engineCurrentSlotOff),
       fundingIndexQpbE6: readI128LE2(data, base + l.engineFundingIndexOff),
@@ -4997,57 +5273,7 @@ function parseEngineLight(data, layout, maxAccounts = 4096) {
       nextAccountId: canReadNextId ? readU64LE2(data, base + nextAccountIdOff) : 0n
     };
   }
-  return {
-    vault: readU128LE2(data, base + 0),
-    insuranceFund: {
-      balance: readU128LE2(data, base + 16),
-      feeRevenue: readU128LE2(data, base + 32),
-      isolatedBalance: readU128LE2(data, base + 48),
-      isolationBps: readU16LE2(data, base + 64)
-    },
-    currentSlot: readU64LE2(data, base + 360),
-    // PERC-1094: params end at 72+288=360 (was 352)
-    fundingIndexQpbE6: readI128LE2(data, base + 368),
-    lastFundingSlot: readU64LE2(data, base + 384),
-    fundingRateBpsPerSlotLast: readI64LE2(data, base + 392),
-    fundingRateE9: 0n,
-    marketMode: null,
-    lastCrankSlot: readU64LE2(data, base + 424),
-    maxCrankStalenessSlots: readU64LE2(data, base + 408),
-    totalOpenInterest: readU128LE2(data, base + 416),
-    longOi: readU128LE2(data, base + 432),
-    shortOi: readU128LE2(data, base + 448),
-    cTot: readU128LE2(data, base + 464),
-    pnlPosTot: readU128LE2(data, base + 480),
-    pnlMaturedPosTot: 0n,
-    liqCursor: readU16LE2(data, base + 496),
-    gcCursor: readU16LE2(data, base + 498),
-    lastSweepStartSlot: readU64LE2(data, base + 504),
-    lastSweepCompleteSlot: readU64LE2(data, base + 512),
-    crankCursor: readU16LE2(data, base + 520),
-    sweepStartIdx: readU16LE2(data, base + 522),
-    lifetimeLiquidations: readU64LE2(data, base + 528),
-    lifetimeForceCloses: readU64LE2(data, base + 536),
-    netLpPos: readI128LE2(data, base + 544),
-    lpSumAbs: readU128LE2(data, base + 560),
-    lpMaxAbs: readU128LE2(data, base + 576),
-    lpMaxAbsSweep: readU128LE2(data, base + 592),
-    emergencyOiMode: data[base + 608] !== 0,
-    emergencyStartSlot: readU64LE2(data, base + 616),
-    lastBreakerSlot: readU64LE2(data, base + 624),
-    markPriceE6: readU64LE2(data, base + 400),
-    // PERC-1094: was 392
-    oraclePriceE6: 0n,
-    fLongNum: 0n,
-    fShortNum: 0n,
-    negPnlAccountCount: 0n,
-    fundPxLast: 0n,
-    resolvedKLongTerminalDelta: 0n,
-    resolvedKShortTerminalDelta: 0n,
-    resolvedLivePrice: 0n,
-    numUsedAccounts: canReadNumUsed ? readU16LE2(data, base + numUsedOff) : 0,
-    nextAccountId: canReadNextId ? readU64LE2(data, base + nextAccountIdOff) : 0n
-  };
+  throw new Error(`parseEngineLight: unrecognized slab layout (isV0=${isV0}, isV2=${isV2})`);
 }
 function isRateLimitError(err) {
   if (!err) return false;
@@ -5055,7 +5281,8 @@ function isRateLimitError(err) {
   return msg.includes("429") || msg.toLowerCase().includes("rate limit") || msg.toLowerCase().includes("too many requests");
 }
 function withJitter(delayMs) {
-  return delayMs + Math.floor(Math.random() * delayMs * 0.25);
+  const half = Math.floor(delayMs / 2);
+  return half + Math.floor(Math.random() * (delayMs - half + 1));
 }
 async function discoverMarkets(connection, programId, options = {}) {
   const {
@@ -5064,7 +5291,7 @@ async function discoverMarkets(connection, programId, options = {}) {
     rateLimitBackoffMs = [1e3, 3e3, 9e3, 27e3],
     maxParallelTiers = 6
   } = options;
-  const ALL_TIERS = [
+  const ALL_TIERS_RAW = [
     ...Object.values(SLAB_TIERS),
     // v12.17 (default)
     ...Object.values(SLAB_TIERS_V12_19),
@@ -5084,6 +5311,14 @@ async function discoverMarkets(connection, programId, options = {}) {
     ...Object.values(SLAB_TIERS_V_ADL),
     ...Object.values(SLAB_TIERS_V_SETDEXPOOL)
   ];
+  const tierBySize = /* @__PURE__ */ new Map();
+  for (const tier of ALL_TIERS_RAW) {
+    const existing = tierBySize.get(tier.dataSize);
+    if (!existing || tier.maxAccounts > existing.maxAccounts) {
+      tierBySize.set(tier.dataSize, tier);
+    }
+  }
+  const ALL_TIERS = [...tierBySize.values()];
   let rawAccounts = [];
   async function fetchTierWithRetry(tier) {
     for (let attempt = 0; attempt <= rateLimitBackoffMs.length; attempt++) {
@@ -5165,10 +5400,13 @@ async function discoverMarkets(connection, programId, options = {}) {
               // base58 of TALOCREP (u64 LE magic)
             }
           }
-        ],
-        dataSlice: { offset: 0, length: HEADER_SLICE_LENGTH }
+        ]
       });
-      rawAccounts = [...fallback].map((e) => ({ ...e, maxAccounts: 4096, dataSize: SLAB_TIERS.large.dataSize }));
+      rawAccounts = [...fallback].map((e) => {
+        const len = e.account.data.length;
+        const lay = detectSlabLayout(len, new Uint8Array(e.account.data));
+        return { ...e, maxAccounts: lay?.maxAccounts ?? 4096, dataSize: len };
+      });
     }
   } catch (err) {
     console.warn(
@@ -5185,10 +5423,13 @@ async function discoverMarkets(connection, programId, options = {}) {
               // base58 of TALOCREP (u64 LE magic)
             }
           }
-        ],
-        dataSlice: { offset: 0, length: HEADER_SLICE_LENGTH }
+        ]
       });
-      rawAccounts = [...fallback].map((e) => ({ ...e, maxAccounts: 4096, dataSize: SLAB_TIERS.large.dataSize }));
+      rawAccounts = [...fallback].map((e) => {
+        const len = e.account.data.length;
+        const lay = detectSlabLayout(len, new Uint8Array(e.account.data));
+        return { ...e, maxAccounts: lay?.maxAccounts ?? 4096, dataSize: len };
+      });
     } catch (memcmpErr) {
       console.warn(
         "[discoverMarkets] memcmp fallback also failed:",
@@ -5640,18 +5881,21 @@ function isStandardToken(tokenProgramId) {
 
 // src/solana/stake.ts
 import { PublicKey as PublicKey11, SystemProgram as SystemProgram2, SYSVAR_RENT_PUBKEY as SYSVAR_RENT_PUBKEY2, SYSVAR_CLOCK_PUBKEY as SYSVAR_CLOCK_PUBKEY2 } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID as TOKEN_PROGRAM_ID4 } from "@solana/spl-token";
+import { TOKEN_PROGRAM_ID as TOKEN_PROGRAM_ID4, TOKEN_2022_PROGRAM_ID as TOKEN_2022_PROGRAM_ID2 } from "@solana/spl-token";
 var STAKE_PROGRAM_IDS = {
   devnet: "6aJb1F9CDCVWCNYFwj8aQsVb696YnW6J1FznteHq4Q6k",
   mainnet: "DC5fovFQD5SZYsetwvEqd4Wi4PFY1Yfnc669VMe6oa7F"
 };
+Object.freeze(STAKE_PROGRAM_IDS);
 function getStakeProgramId(network) {
-  const override = safeEnv("STAKE_PROGRAM_ID");
-  if (override) {
-    console.warn(
-      `[percolator-sdk] STAKE_PROGRAM_ID env override active: ${override} \u2014 ensure this points to a trusted program`
-    );
-    return new PublicKey11(override);
+  if (!network) {
+    const override = safeEnv("STAKE_PROGRAM_ID");
+    if (override) {
+      console.warn(
+        `[percolator-sdk] STAKE_PROGRAM_ID env override active: ${override} \u2014 ensure this points to a trusted program`
+      );
+      return new PublicKey11(override);
+    }
   }
   const detectedNetwork = network ?? (() => {
     const n = safeEnv("NEXT_PUBLIC_DEFAULT_NETWORK")?.toLowerCase() ?? safeEnv("NETWORK")?.toLowerCase() ?? "";
@@ -5704,6 +5948,7 @@ var STAKE_IX = {
   /** Mark the pool as resolved after the wrapper market has been resolved directly. */
   SetMarketResolved: 18
 };
+Object.freeze(STAKE_IX);
 var TEXT2 = new TextEncoder();
 function deriveStakePool(slab, programId) {
   return PublicKey11.findProgramAddressSync(
@@ -5846,7 +6091,7 @@ function encodeStakeAdminSetInsurancePolicy(authority, minWithdrawBase, maxWithd
   void cooldownSlots;
   return removedStakeInstruction("encodeStakeAdminSetInsurancePolicy", STAKE_IX.AdminSetInsurancePolicy);
 }
-var STAKE_POOL_SIZE = 352;
+var STAKE_POOL_SIZE = 384;
 function decodeStakePool(data) {
   if (data.length < STAKE_POOL_SIZE) {
     throw new Error(`StakePool data too short: ${data.length} < ${STAKE_POOL_SIZE}`);
@@ -5897,6 +6142,9 @@ function decodeStakePool(data) {
   const poolMode = bytes[off];
   off += 1;
   off += 7;
+  const pendingAdminBytes = bytes.subarray(off, off + 32);
+  off += 32;
+  const pendingAdmin = pendingAdminBytes.every((b) => b === 0) ? null : new PublicKey11(pendingAdminBytes);
   const reservedStart = off;
   const marketResolved = bytes[reservedStart + 9] === 1;
   const hwmEnabled = bytes[reservedStart + 10] === 1;
@@ -5926,6 +6174,7 @@ function decodeStakePool(data) {
     totalReturned,
     totalWithdrawn,
     percolatorProgram,
+    pendingAdmin,
     totalFeesEarned,
     lastFeeAccrualSlot,
     lastVaultSnapshot,
@@ -5954,7 +6203,7 @@ function decodeDepositPda(data) {
     lpAmount: readU64LE4(data, 80)
   };
 }
-function initPoolAccounts(a) {
+function initPoolAccounts(a, tokenProgramId = TOKEN_PROGRAM_ID4) {
   return [
     { pubkey: a.admin, isSigner: true, isWritable: true },
     { pubkey: a.slab, isSigner: false, isWritable: false },
@@ -5964,12 +6213,12 @@ function initPoolAccounts(a) {
     { pubkey: a.vaultAuth, isSigner: false, isWritable: false },
     { pubkey: a.collateralMint, isSigner: false, isWritable: false },
     { pubkey: a.percolatorProgram, isSigner: false, isWritable: false },
-    { pubkey: TOKEN_PROGRAM_ID4, isSigner: false, isWritable: false },
+    { pubkey: tokenProgramId, isSigner: false, isWritable: false },
     { pubkey: SystemProgram2.programId, isSigner: false, isWritable: false },
     { pubkey: SYSVAR_RENT_PUBKEY2, isSigner: false, isWritable: false }
   ];
 }
-function depositAccounts(a) {
+function depositAccounts(a, tokenProgramId = TOKEN_PROGRAM_ID4) {
   return [
     { pubkey: a.user, isSigner: true, isWritable: false },
     { pubkey: a.pool, isSigner: false, isWritable: true },
@@ -5979,12 +6228,12 @@ function depositAccounts(a) {
     { pubkey: a.userLpAta, isSigner: false, isWritable: true },
     { pubkey: a.vaultAuth, isSigner: false, isWritable: false },
     { pubkey: a.depositPda, isSigner: false, isWritable: true },
-    { pubkey: TOKEN_PROGRAM_ID4, isSigner: false, isWritable: false },
+    { pubkey: tokenProgramId, isSigner: false, isWritable: false },
     { pubkey: SYSVAR_CLOCK_PUBKEY2, isSigner: false, isWritable: false },
     { pubkey: SystemProgram2.programId, isSigner: false, isWritable: false }
   ];
 }
-function withdrawAccounts(a) {
+function withdrawAccounts(a, tokenProgramId = TOKEN_PROGRAM_ID4) {
   return [
     { pubkey: a.user, isSigner: true, isWritable: false },
     { pubkey: a.pool, isSigner: false, isWritable: true },
@@ -5994,11 +6243,11 @@ function withdrawAccounts(a) {
     { pubkey: a.userCollateralAta, isSigner: false, isWritable: true },
     { pubkey: a.vaultAuth, isSigner: false, isWritable: false },
     { pubkey: a.depositPda, isSigner: false, isWritable: true },
-    { pubkey: TOKEN_PROGRAM_ID4, isSigner: false, isWritable: false },
+    { pubkey: tokenProgramId, isSigner: false, isWritable: false },
     { pubkey: SYSVAR_CLOCK_PUBKEY2, isSigner: false, isWritable: false }
   ];
 }
-function flushToInsuranceAccounts(a) {
+function flushToInsuranceAccounts(a, tokenProgramId = TOKEN_PROGRAM_ID4) {
   return [
     { pubkey: a.caller, isSigner: true, isWritable: false },
     { pubkey: a.pool, isSigner: false, isWritable: true },
@@ -6007,7 +6256,7 @@ function flushToInsuranceAccounts(a) {
     { pubkey: a.slab, isSigner: false, isWritable: true },
     { pubkey: a.wrapperVault, isSigner: false, isWritable: true },
     { pubkey: a.percolatorProgram, isSigner: false, isWritable: false },
-    { pubkey: TOKEN_PROGRAM_ID4, isSigner: false, isWritable: false }
+    { pubkey: tokenProgramId, isSigner: false, isWritable: false }
   ];
 }
 
@@ -6021,7 +6270,7 @@ function computePnlPct(pnl, capital) {
   return pnl * 10000n / capital;
 }
 function isAdlTriggered(slabData) {
-  const layout = detectSlabLayout(slabData.length);
+  const layout = detectSlabLayout(slabData.length, slabData);
   if (!layout) return false;
   try {
     const engine = parseEngine(slabData);
@@ -6038,7 +6287,7 @@ async function fetchAdlRankedPositions(connection, slab) {
   return rankAdlPositions(data);
 }
 function rankAdlPositions(slabData) {
-  const layout = detectSlabLayout(slabData.length);
+  const layout = detectSlabLayout(slabData.length, slabData);
   let pnlPosTot = 0n;
   try {
     const engine = parseEngine(slabData);
@@ -6165,6 +6414,37 @@ async function fetchAdlRankings(apiBase, slab, fetchFn = fetch) {
     );
   }
   const json = await res.json();
+  if (typeof json !== "object" || json === null) {
+    throw new Error("fetchAdlRankings: API returned non-object response");
+  }
+  const obj = json;
+  if (!Array.isArray(obj.rankings)) {
+    throw new Error("fetchAdlRankings: API response missing rankings array");
+  }
+  if (typeof obj.adlNeeded !== "boolean") {
+    throw new Error(`fetchAdlRankings: invalid adlNeeded field: ${obj.adlNeeded}`);
+  }
+  if (typeof obj.capExceeded !== "boolean") {
+    throw new Error(`fetchAdlRankings: invalid capExceeded field: ${obj.capExceeded}`);
+  }
+  if (typeof obj.slabAddress !== "string") {
+    throw new Error(`fetchAdlRankings: invalid slabAddress field: ${obj.slabAddress}`);
+  }
+  if (typeof obj.pnlPosTot !== "string") {
+    throw new Error(`fetchAdlRankings: invalid pnlPosTot field: ${obj.pnlPosTot}`);
+  }
+  if (typeof obj.maxPnlCap !== "string") {
+    throw new Error(`fetchAdlRankings: invalid maxPnlCap field: ${obj.maxPnlCap}`);
+  }
+  for (const entry of obj.rankings) {
+    if (typeof entry !== "object" || entry === null) {
+      throw new Error("fetchAdlRankings: invalid ranking entry (not an object)");
+    }
+    const r = entry;
+    if (typeof r.idx !== "number" || !Number.isInteger(r.idx) || r.idx < 0) {
+      throw new Error(`fetchAdlRankings: invalid ranking idx: ${r.idx}`);
+    }
+  }
   return json;
 }
 
@@ -6223,9 +6503,11 @@ function isRetryable(err, codes) {
   if (!err) return false;
   const msg = err instanceof Error ? err.message : String(err);
   for (const code of codes) {
-    if (msg.includes(String(code))) return true;
+    const pattern = new RegExp(`(?<![0-9])${code}(?![0-9])`);
+    if (pattern.test(msg)) return true;
   }
-  if (msg.toLowerCase().includes("rate limit") || msg.toLowerCase().includes("too many requests") || msg.toLowerCase().includes("econnreset") || msg.toLowerCase().includes("econnrefused") || msg.toLowerCase().includes("socket hang up") || msg.toLowerCase().includes("network") || msg.toLowerCase().includes("timeout") || msg.toLowerCase().includes("abort")) {
+  const lower = msg.toLowerCase();
+  if (lower.includes("rate limit") || lower.includes("too many requests") || lower.includes("bad gateway") || lower.includes("service unavailable") || lower.includes("econnreset") || lower.includes("econnrefused") || lower.includes("socket hang up") || lower.includes("network") || lower.includes("timeout") || lower.includes("abort")) {
     return true;
   }
   return false;
@@ -6235,8 +6517,9 @@ function computeDelay(attempt, config) {
     config.baseDelayMs * Math.pow(2, attempt),
     config.maxDelayMs
   );
-  const jitter = Math.floor(Math.random() * raw * config.jitterFactor);
-  return raw + jitter;
+  if (config.jitterFactor === 0) return raw;
+  const half = Math.floor(raw / 2);
+  return half + Math.floor(Math.random() * (raw - half + 1));
 }
 function rejectAfter(ms, message) {
   let timer;
@@ -6268,6 +6551,8 @@ var RpcPool = class _RpcPool {
   retryConfig;
   requestTimeoutMs;
   verbose;
+  /** Time-based recovery window in ms (0 = disabled). */
+  recoveryAfterMs;
   /** Round-robin index tracker. */
   rrIndex = 0;
   /** Consecutive failure threshold before marking an endpoint unhealthy. */
@@ -6282,6 +6567,7 @@ var RpcPool = class _RpcPool {
     this.retryConfig = resolveRetryConfig(config.retry);
     this.requestTimeoutMs = config.requestTimeoutMs ?? 3e4;
     this.verbose = config.verbose ?? true;
+    this.recoveryAfterMs = config.recoveryAfterMs ?? 6e4;
     const commitment = config.commitment ?? "confirmed";
     this.endpoints = config.endpoints.map((raw) => {
       const ep = normalizeEndpoint(raw);
@@ -6336,16 +6622,16 @@ var RpcPool = class _RpcPool {
           fn(ep.connection),
           timeout.promise
         ]);
-        timeout.cancel();
         ep.failures = 0;
         ep.healthy = true;
+        ep.unhealthySince = void 0;
         return result;
       } catch (err) {
-        timeout.cancel();
         lastError = err;
         ep.failures++;
         if (ep.failures >= _RpcPool.UNHEALTHY_THRESHOLD) {
           ep.healthy = false;
+          ep.unhealthySince = ep.unhealthySince ?? Date.now();
           if (this.verbose) {
             console.warn(
               `[RpcPool] Endpoint ${ep.label} marked unhealthy after ${ep.failures} consecutive failures`
@@ -6375,6 +6661,8 @@ var RpcPool = class _RpcPool {
           const delay = computeDelay(attempt, this.retryConfig);
           await sleep(delay);
         }
+      } finally {
+        timeout.cancel();
       }
     }
     this.maybeRecoverEndpoints();
@@ -6422,7 +6710,10 @@ var RpcPool = class _RpcPool {
         const result = await checkRpcHealth(ep.config.url, timeoutMs);
         ep.lastLatencyMs = result.latencyMs;
         ep.healthy = result.healthy;
-        if (result.healthy) ep.failures = 0;
+        if (result.healthy) {
+          ep.failures = 0;
+          ep.unhealthySince = void 0;
+        }
         result.endpoint = redactUrl(result.endpoint);
         return result;
       })
@@ -6463,6 +6754,19 @@ var RpcPool = class _RpcPool {
    * Returns -1 if no endpoint is available.
    */
   selectEndpoint(exclude) {
+    if (this.recoveryAfterMs > 0) {
+      const now = Date.now();
+      for (const ep of this.endpoints) {
+        if (!ep.healthy && ep.unhealthySince !== void 0 && now - ep.unhealthySince >= this.recoveryAfterMs) {
+          ep.healthy = true;
+          ep.failures = 0;
+          ep.unhealthySince = void 0;
+          if (this.verbose) {
+            console.warn(`[RpcPool] Endpoint ${ep.label} restored after ${this.recoveryAfterMs}ms recovery window`);
+          }
+        }
+      }
+    }
     const healthy = this.endpoints.map((ep, i) => ({ ep, i })).filter(({ ep, i }) => ep.healthy && !exclude?.has(i));
     if (healthy.length === 0) {
       const remaining = this.endpoints.map((_, i) => i).filter((i) => !exclude?.has(i));
@@ -6492,6 +6796,7 @@ var RpcPool = class _RpcPool {
       for (const ep of this.endpoints) {
         ep.healthy = true;
         ep.failures = 0;
+        ep.unhealthySince = void 0;
       }
     }
   }
@@ -6739,19 +7044,16 @@ function isLighthouseError(error) {
 }
 function isLighthouseFailureInLogs(logs) {
   if (!Array.isArray(logs)) return false;
-  let insideLighthouse = false;
+  let lighthouseDepth = 0;
   for (const line of logs) {
     if (typeof line !== "string") continue;
     if (line.includes(`Program ${LIGHTHOUSE_PROGRAM_ID_STR} invoke`)) {
-      insideLighthouse = true;
+      lighthouseDepth++;
       continue;
     }
     if (line.includes(`Program ${LIGHTHOUSE_PROGRAM_ID_STR} success`)) {
-      insideLighthouse = false;
+      if (lighthouseDepth > 0) lighthouseDepth--;
       continue;
-    }
-    if (insideLighthouse && /failed/i.test(line)) {
-      return true;
     }
     if (line.includes(`Program ${LIGHTHOUSE_PROGRAM_ID_STR} failed`)) {
       return true;
@@ -6953,19 +7255,6 @@ var I64_MAX = BigInt("9223372036854775807");
 var U128_MAX = (1n << 128n) - 1n;
 var I128_MIN = -(1n << 127n);
 var I128_MAX = (1n << 127n) - 1n;
-function requireDecimalUIntString(value, field) {
-  const t = value.trim();
-  if (t === "") {
-    throw new ValidationError(field, `"${value}" is not a valid number`);
-  }
-  if (!/^(0|[1-9]\d*)$/.test(t)) {
-    throw new ValidationError(
-      field,
-      `"${value}" is not a valid non-negative integer (use decimal digits only, e.g. 123).`
-    );
-  }
-  return t;
-}
 var ValidationError = class extends Error {
   constructor(field, message) {
     super(`Invalid ${field}: ${message}`);
@@ -6973,6 +7262,30 @@ var ValidationError = class extends Error {
     this.name = "ValidationError";
   }
 };
+var DECIMAL_UINT_RE = /^(0|[1-9]\d*)$/;
+var DECIMAL_INT_RE = /^-?(0|[1-9]\d*)$/;
+function requireDecimalUIntString(value, field) {
+  const t = value.trim();
+  if (t === "") {
+    throw new ValidationError(field, `"${value}" is not a valid number`);
+  }
+  if (!DECIMAL_UINT_RE.test(t)) {
+    throw new ValidationError(
+      field,
+      `"${value}" is not a valid non-negative integer (use decimal digits only, e.g. 123).`
+    );
+  }
+  return t;
+}
+function safeBigInt(val, caller) {
+  const t = val.trim();
+  if (!DECIMAL_INT_RE.test(t)) {
+    throw new Error(
+      `${caller}: "${val}" is not a valid decimal integer (use plain decimal digits, e.g. 123 or -42; no hex, scientific notation, or underscores).`
+    );
+  }
+  return BigInt(t);
+}
 function validatePublicKey(value, field) {
   try {
     return new PublicKey15(value);
@@ -7238,6 +7551,7 @@ var PYTH_SOLANA_FEEDS = {
   // IOT
   "8bdd20f0c68bf7370a19389bbb3d17c1db7956c38efa08b2f3dd0e5db9b8c1ef": { symbol: "IOT", mint: "iotEVVZLEywoTn1QdwNPddxPWszn3zFhEot3MfL9fns" }
 };
+Object.freeze(PYTH_SOLANA_FEEDS);
 var MINT_TO_PYTH_FEED = /* @__PURE__ */ new Map();
 for (const [feedId, info] of Object.entries(PYTH_SOLANA_FEEDS)) {
   MINT_TO_PYTH_FEED.set(info.mint, { feedId, symbol: info.symbol });
@@ -7315,9 +7629,17 @@ async function resolvePrice(mint, signal, options) {
   const pythSource = lookupPythSource(mint);
   const allSources = [];
   if (pythSource) {
-    const refPrice = dexSources[0]?.price || jupiterSource?.price || 0;
-    pythSource.price = refPrice;
-    allSources.push(pythSource);
+    const dexPrice = dexSources[0]?.price ?? 0;
+    const jupPrice = jupiterSource?.price ?? 0;
+    const refPrice = dexPrice > 0 ? dexPrice : jupPrice > 0 ? jupPrice : 0;
+    if (refPrice > 0) {
+      pythSource.price = refPrice;
+      const sourceCount = (dexPrice > 0 ? 1 : 0) + (jupPrice > 0 ? 1 : 0);
+      if (sourceCount === 1) {
+        pythSource.confidence = Math.min(pythSource.confidence, 50);
+      }
+      allSources.push(pythSource);
+    }
   }
   allSources.push(...dexSources);
   if (jupiterSource) {
@@ -7370,6 +7692,7 @@ export {
   ACCOUNTS_NFT_EMERGENCY_BURN,
   ACCOUNTS_NFT_MINT,
   ACCOUNTS_PAUSE_MARKET,
+  ACCOUNTS_PERMISSIONLESS_CRANK_BASE,
   ACCOUNTS_QUEUE_WITHDRAWAL,
   ACCOUNTS_RECLAIM_EMPTY_ACCOUNT,
   ACCOUNTS_RECLAIM_SLAB_RENT,
@@ -7377,6 +7700,7 @@ export {
   ACCOUNTS_RESOLVE_DISPUTE,
   ACCOUNTS_RESOLVE_MARKET,
   ACCOUNTS_RESOLVE_PERMISSIONLESS,
+  ACCOUNTS_RESTART_ASSET_ORACLE,
   ACCOUNTS_SETTLE_ACCOUNT,
   ACCOUNTS_SET_DEX_POOL,
   ACCOUNTS_SET_DISPUTE_PARAMS,
@@ -7422,6 +7746,7 @@ export {
   ENGINE_MARK_PRICE_OFF,
   ENGINE_OFF,
   EXPECTED_SLAB_VERSION,
+  HEX_RE,
   INIT_CTX_LEN,
   IX_TAG,
   LIGHTHOUSE_CONSTRAINT_ADDRESS,
@@ -7531,10 +7856,16 @@ export {
   deriveCreatorLockPda,
   deriveDepositPda,
   deriveInsuranceLpMint,
+  deriveLpBackingLedger,
+  deriveLpEscrow,
   deriveLpPda,
+  deriveLpRedemption,
+  deriveLpVaultRegistry,
+  deriveMatcherDelegate,
   deriveMintAuthority,
   deriveNftMint,
   deriveNftPda,
+  deriveNftRegistry,
   derivePythPriceUpdateAccount,
   derivePythPushOraclePDA,
   deriveStakePool,
@@ -7587,6 +7918,7 @@ export {
   encodeDepositToLpVault,
   encodeExecuteAdl,
   encodeExecuteRedemption,
+  encodeFeedId,
   encodeForceCloseResolved,
   encodeFundMarketInsurance,
   encodeInitLP,
@@ -7717,7 +8049,10 @@ export {
   parseEngine,
   parseErrorFromLogs,
   parseHeader,
+  parseLpRedemption,
+  parseLpVaultRegistry,
   parseParams,
+  parsePortfolioV17,
   parsePositionNftAccount,
   parseUsedIndices,
   parseWrapperConfigV17,
@@ -7725,7 +8060,9 @@ export {
   readLastThrUpdateSlot,
   readNonce,
   registerStaticMarkets,
+  requireDecimalUIntString,
   resolvePrice,
+  safeBigInt,
   safeEnv,
   simulateOrSend,
   slabDataSize,

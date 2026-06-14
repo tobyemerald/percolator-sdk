@@ -13,7 +13,15 @@ export interface AccountSpec {
  */
 export declare const ACCOUNTS_INIT_MARKET: readonly AccountSpec[];
 /**
- * InitUser: 5 accounts (clock/oracle removed in commit 410f947)
+ * InitPortfolio (tag 2): 3 accounts.
+ *
+ * v17 wire account layout (v16_program.rs handle_init_portfolio):
+ *   [0] owner      signer, writable (portfolio owner; pays for alloc)
+ *   [1] market     writable (market-group slab; must be program-owned)
+ *   [2] portfolio  writable (portfolio PDA; must be program-owned)
+ *
+ * v12 clock sysvar, userAta, vault, tokenProgram are gone — v17
+ * InitPortfolio does not transfer collateral and does not read the clock.
  */
 export declare const ACCOUNTS_INIT_USER: readonly AccountSpec[];
 /**
@@ -29,21 +37,83 @@ export declare const ACCOUNTS_INIT_USER: readonly AccountSpec[];
  */
 export declare const ACCOUNTS_INIT_LP: readonly AccountSpec[];
 /**
- * DepositCollateral: 6 accounts
+ * Deposit (tag 3): 6 accounts.
+ *
+ * v17 wire account layout (v16_program.rs handle_deposit):
+ *   [0] owner        signer (portfolio owner)
+ *   [1] market       writable (market-group slab; must be program-owned)
+ *   [2] portfolio    writable (portfolio PDA; must be program-owned)
+ *   [3] sourceToken  writable (owner's collateral ATA)
+ *   [4] vaultToken   writable (program vault token account)
+ *   [5] tokenProgram read-only
+ *
+ * v12 stale accounts removed: clock sysvar. Portfolio account added at [2].
+ * v17 amount is u128 (see instructions.ts encodeDepositCollateral).
  */
 export declare const ACCOUNTS_DEPOSIT_COLLATERAL: readonly AccountSpec[];
 /**
- * WithdrawCollateral: 8 accounts
+ * Withdraw (tag 4): 7 accounts.
+ *
+ * v17 wire account layout (v16_program.rs handle_withdraw):
+ *   [0] owner          signer (portfolio owner)
+ *   [1] market         writable (market-group slab; must be program-owned)
+ *   [2] portfolio      writable (portfolio PDA; must be program-owned)
+ *   [3] destToken      writable (owner's collateral ATA — destination)
+ *   [4] vaultToken     writable (program vault token account — source)
+ *   [5] vaultAuthority read-only (PDA that signs token CPI)
+ *   [6] tokenProgram   read-only
+ *
+ * v12 stale accounts removed: clock sysvar, oracleIdx. Portfolio added at [2].
+ * v17 amount is u128 (see instructions.ts encodeWithdrawCollateral).
  */
 export declare const ACCOUNTS_WITHDRAW_COLLATERAL: readonly AccountSpec[];
 /**
  * KeeperCrank: 4 accounts
+ * @deprecated v12.x only. Use ACCOUNTS_PERMISSIONLESS_CRANK in v17.
  */
 export declare const ACCOUNTS_KEEPER_CRANK: readonly AccountSpec[];
 /**
- * TradeNoCpi: 5 accounts.
- * v12.19 wrapper at src/percolator.rs:8484 calls accounts::expect_len(5).
- * Layout: [user(s+w), lp(s+w), slab(w), clock, oracle].
+ * PermissionlessCrank (tag 5): 3 fixed accounts + variable oracle tail.
+ *
+ * v17 wire account layout (v16_program.rs handle_permissionless_crank):
+ *   [0] owner         signer, writable (keeper key; receives liquidation reward)
+ *   [1] market        writable (the market-group slab)
+ *   [2] portfolio     writable (the PORTFOLIO being cranked / liquidated)
+ *   [3..] oracleTail  read-only oracle accounts (Pyth PriceUpdateV2 PDAs, one per asset)
+ *
+ * For liquidation with reward (action=1 and cfg.liquidation_cranker_fee_share_bps!=0),
+ * the LAST oracle tail account must be the keeper's OWN portfolio (writable), so the
+ * program can credit the liquidation fee there. The keeper portfolio must be owned by
+ * the same program and have a different key from accounts[2].
+ *
+ * Use buildPermissionlessCrankKeys() (in keeper) to assemble the full account list
+ * including oracle tail and optional keeper portfolio.
+ */
+export declare const ACCOUNTS_PERMISSIONLESS_CRANK_BASE: readonly AccountSpec[];
+/**
+ * RestartAssetOracle (tag 69): 2 accounts.
+ *
+ * v17 wire account layout (v16_program.rs:9660 handle_restart_asset_oracle):
+ *   [0] authority     signer (asset_admin for the target asset_index)
+ *   [1] market        writable (the market-group slab)
+ *
+ * Gated by the asset's asset_admin key (per-asset in AssetOracleProfileV16).
+ * Only callable when the asset lifecycle == ASSET_LIFECYCLE_RECOVERY.
+ * Permissionless in the sense that any holder of asset_admin can call it.
+ */
+export declare const ACCOUNTS_RESTART_ASSET_ORACLE: readonly AccountSpec[];
+/**
+ * TradeNoCpi (tag 9): 5 accounts.
+ *
+ * v17 wire account layout (v16_program.rs handle_trade_nocpi):
+ *   [0] signerA   signer, writable (party A — portfolio owner)
+ *   [1] signerB   signer, writable (party B — portfolio owner)
+ *   [2] market    writable (market-group slab; program-owned)
+ *   [3] accountA  writable (portfolio A; program-owned)
+ *   [4] accountB  writable (portfolio B; program-owned)
+ *
+ * v12 stale accounts removed: lp, clock, oracle. market replaces slab.
+ * signerB replaces lp (both portfolios must have live owner signers).
  */
 export declare const ACCOUNTS_TRADE_NOCPI: readonly AccountSpec[];
 /**
@@ -52,17 +122,51 @@ export declare const ACCOUNTS_TRADE_NOCPI: readonly AccountSpec[];
  */
 export declare const ACCOUNTS_LIQUIDATE_AT_ORACLE: readonly AccountSpec[];
 /**
- * CloseAccount: 8 accounts
+ * ClosePortfolio (tag 8): 3 accounts.
+ *
+ * v17 wire account layout (v16_program.rs handle_close_portfolio):
+ *   [0] owner      signer, writable (portfolio owner or marketauth on terminal cleanup)
+ *   [1] market     writable (market-group slab; program-owned)
+ *   [2] portfolio  writable (portfolio PDA being closed; program-owned)
+ *
+ * v12 stale accounts removed: vault, userAta, vaultPda, tokenProgram, clock, oracle.
+ * v17 ClosePortfolio does not transfer collateral — it simply deregisters the
+ * portfolio and closes the account back to the market slab.
  */
 export declare const ACCOUNTS_CLOSE_ACCOUNT: readonly AccountSpec[];
 /**
- * TopUpInsurance: 6 accounts.
- * v12.19 wrapper at src/percolator.rs:9256 calls accounts::expect_len(6).
- * Layout: [user(s+w), slab(w), userAta(w), vault(w), tokenProgram, clock].
+ * TopUpInsurance (tag 28): 5 fixed accounts + 1 optional.
+ *
+ * v17 wire account layout (v16_program.rs handle_top_up_insurance):
+ *   [0] signer       signer, writable (insurance authority for asset 0)
+ *   [1] market       writable (market-group slab; program-owned)
+ *   [2] sourceToken  writable (signer's collateral ATA — source)
+ *   [3] vaultToken   writable (program vault token account — destination)
+ *   [4] tokenProgram read-only
+ *   [5] ledger       writable, optional (per-asset InsuranceLedger PDA)
+ *
+ * v12 stale accounts removed: clock sysvar (was at [5]).
+ * v17 amount is u128 (see instructions.ts encodeTopUpInsurance).
+ * Pass ledger PDA derived via deriveInsuranceLedger() when tracking
+ * per-authority deposit principals; omit for simple vault top-ups.
  */
 export declare const ACCOUNTS_TOPUP_INSURANCE: readonly AccountSpec[];
 /**
- * TradeCpi: 8 accounts (deployed program expects clock sysvar at index 3)
+ * TradeCpi (tag 10): 7 fixed accounts + optional tail.
+ *
+ * v17 wire account layout (v16_program.rs handle_trade_cpi):
+ *   [0] signerA          signer (party A — portfolio owner)
+ *   [1] market           writable (market-group slab; program-owned)
+ *   [2] accountA         writable (portfolio A; program-owned)
+ *   [3] accountB         writable (portfolio B; program-owned)
+ *   [4] matcherProg      read-only, executable (matcher program)
+ *   [5] matcherCtx       writable (matcher context account; owned by matcherProg)
+ *   [6] matcherDelegate  read-only (PDA derived by deriveMatcherDelegate())
+ *   [7+] tail            additional accounts forwarded to matcher CPI
+ *
+ * v12 stale accounts removed: lpOwner, clock, oracle, lpPda.
+ * matcherDelegate replaces lpPda — derive via deriveMatcherDelegate().
+ * market replaces slab name.
  */
 export declare const ACCOUNTS_TRADE_CPI: readonly AccountSpec[];
 /**
@@ -119,8 +223,20 @@ export declare const ACCOUNTS_SET_ORACLE_PRICE_CAP: readonly AccountSpec[];
  */
 export declare const ACCOUNTS_RESOLVE_MARKET: readonly AccountSpec[];
 /**
- * WithdrawInsurance: 6 accounts
- * Withdraw insurance fund after market resolution (admin only)
+ * WithdrawInsurance (tag 41): 6 fixed accounts + 1 optional.
+ *
+ * v17 wire account layout (v16_program.rs handle_withdraw_insurance):
+ *   [0] authority       signer, writable (insurance authority)
+ *   [1] market          writable (market-group slab; program-owned)
+ *   [2] destToken       writable (authority's collateral ATA — destination)
+ *   [3] vaultToken      writable (program vault token account — source)
+ *   [4] vaultAuthority  read-only (PDA that signs token CPI)
+ *   [5] tokenProgram    read-only
+ *   [6] ledger          writable, optional (per-authority InsuranceLedger PDA)
+ *
+ * v12 stale ordering fixed: vaultPda was at [5] after tokenProgram.
+ * v17 layout: dest_token → vault_token → vault_authority → token_program.
+ * Only callable on terminal markets (mode==1, materialized_portfolio_count==0).
  */
 export declare const ACCOUNTS_WITHDRAW_INSURANCE: readonly AccountSpec[];
 /**
@@ -279,8 +395,52 @@ export declare const ACCOUNTS_AUDIT_CRANK: readonly AccountSpec[];
  */
 export declare const ACCOUNTS_ADVANCE_ORACLE_PHASE: readonly AccountSpec[];
 export declare const ACCOUNTS_UPDATE_HYPERP_MARK: readonly AccountSpec[];
+/**
+ * CreateLpVault (tag 74): 6 accounts.
+ *
+ * v17 wire account layout (v16_program.rs handle_create_lp_vault):
+ *   [0] admin          signer, writable (marketauth — pays for PDA creation)
+ *   [1] market         read-only (market-group slab; program-owned)
+ *   [2] registry       writable (LpVaultRegistry PDA — derived via deriveLpVaultRegistry())
+ *   [3] lpMint         writable (LP share mint PDA — derived via deriveLpVaultMint())
+ *   [4] systemProgram  read-only (required for create_account CPI)
+ *   [5] tokenProgram   read-only
+ *
+ * v12 stale accounts removed: vaultAuthority, rent (Rent::get() used instead).
+ * registry replaces lpVaultState; lpMint replaces lpVaultMint.
+ */
 export declare const ACCOUNTS_CREATE_LP_VAULT: readonly AccountSpec[];
+/**
+ * DepositToLpVault (tag 75): 10 accounts.
+ *
+ * v17 wire account layout (v16_program.rs handle_deposit_to_lp_vault):
+ *   [0] depositor      signer, writable (LP depositor; pays for ledger creation)
+ *   [1] market         writable (market-group slab; program-owned)
+ *   [2] registry       writable (LpVaultRegistry PDA)
+ *   [3] lpMint         writable (LP share mint PDA)
+ *   [4] depositorLpAta writable (depositor's LP token ATA — receives minted shares)
+ *   [5] sourceToken    writable (depositor's collateral ATA — source)
+ *   [6] vaultToken     writable (program vault token account — destination)
+ *   [7] ledger         writable (LpBackingLedger PDA; lazily created on first deposit)
+ *   [8] tokenProgram   read-only
+ *   [9] systemProgram  read-only (required for ledger create_account CPI)
+ *
+ * v12 stale accounts removed: vaultAuthority, lpVaultState. Added: ledger at [7],
+ * systemProgram at [9]. registry replaces slab+lpVaultState. Reordered to match handler.
+ */
 export declare const ACCOUNTS_LP_VAULT_DEPOSIT: readonly AccountSpec[];
+/**
+ * LpVaultCrankFees (tag 78): 4 accounts.
+ *
+ * v17 wire account layout (v16_program.rs handle_lp_vault_crank_fees):
+ *   [0] cranker   signer, read-only (permissionless — any signer)
+ *   [1] market    writable (market-group slab; program-owned)
+ *   [2] registry  writable (LpVaultRegistry PDA)
+ *   [3] ledger    writable (LpBackingLedger PDA)
+ *
+ * v12 stale accounts replaced: slab and lpVaultState were 2 accounts.
+ * v17 requires 4: cranker signer + market + registry + ledger.
+ */
 export declare const ACCOUNTS_LP_VAULT_CRANK_FEES: readonly AccountSpec[];
 export declare const ACCOUNTS_CHALLENGE_SETTLEMENT: readonly AccountSpec[];
 export declare const ACCOUNTS_RESOLVE_DISPUTE: readonly AccountSpec[];

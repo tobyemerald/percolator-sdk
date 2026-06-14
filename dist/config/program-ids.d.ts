@@ -14,7 +14,7 @@ export declare function safeEnv(key: string): string | undefined;
 export declare const PROGRAM_IDS: {
     readonly devnet: {
         readonly percolator: "FxfD37s1AZTeWfFQps9Zpebi2dNQ9QSSDtfMKdbsfKrD";
-        readonly matcher: "GTRgyTDfrMvBubALAqtHuQwT8tbGyXid7svXZKtWfC9k";
+        readonly matcher: "4HcGCsyjAqnFua5ccuXyt8KRRQzKFbGTJkVChpS7Yfzy";
     };
     readonly mainnet: {
         readonly percolator: "ESa89R5Es3rJ5mnwGybVRG1GrNt9etP11Z5V2QWD4edv";

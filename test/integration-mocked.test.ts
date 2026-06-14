@@ -38,9 +38,9 @@ import { detectSlabLayout } from "../src/solana/slab.js";
 // ============================================================================
 
 /**
- * Build a minimal but structurally valid V1M small slab (65_352 bytes).
+ * Build a minimal but structurally valid V1M small slab (65_416 bytes).
  *
- * SLAB_TIERS_V1M.small!.dataSize=65_352 maps to the V1M layout (mainnet program ESa89R5):
+ * SLAB_TIERS_V1M.small!.dataSize=65_416 maps to the V1M layout (mainnet program ESa89R5):
  *   ENGINE_OFF=640, CONFIG_LEN=536, BITMAP_OFF_REL=720, pnlPosTotOff=552
  *   accountsOff_abs=1928, bitmapAbs=1360, acctOwnerOff=184, acctPositionSizeOff=80
  *
@@ -54,9 +54,9 @@ function buildV1SmallSlab(opts: {
   /** List of user accounts to embed: idx, pnl, capital, positionSize */
   accounts?: Array<{ idx: number; pnl: bigint; capital: bigint; positionSize: bigint }>;
 } = {}): Uint8Array {
-  // V1_LEGACY small slab: 65,352 bytes (ENGINE_OFF=640, ACCOUNT_SIZE=248, BITMAP_OFF=672)
-  // The mock writes at V1_LEGACY offsets, so the size must match V1_LEGACY detection.
-  const size = 65_352;
+  // V1M small slab: 65,416 bytes (ENGINE_OFF=640, ACCOUNT_SIZE=248, BITMAP_OFF_REL=720)
+  // 1928 (accountsOff) + 256*248 (accounts) = 65,416.
+  const size = 65_416;
   const buf = Buffer.alloc(size, 0);
   const dv = new DataView(buf.buffer);
 
@@ -89,19 +89,19 @@ function buildV1SmallSlab(opts: {
   //   → 328 bytes before maxPnlCap → absolute = 104 + 328 = 432
   dv.setBigUint64(432, opts.maxPnlCap ?? 0n, true);
 
-  // ---- ENGINE (V1_LEGACY: ENGINE_OFF=640, bitmapOff_actual=672) ----
-  // SLAB_TIERS_V1M.small!.dataSize=65_352 → detectSlabLayout returns V1_LEGACY layout:
-  //   engineOff=640, pnlPosTotOff=504, bitmapOff_actual=672, accountsOff=1880, acctOwnerOff=200
-  // pnlPosTot u128 at absolute = 640 + 504 = 1144
+  // ---- ENGINE (V1M: ENGINE_OFF=640, BITMAP_OFF_REL=720, bitmapAbs=1360) ----
+  // SLAB_TIERS_V1M.small!.dataSize=65_416 → detectSlabLayout returns V1M layout:
+  //   engineOff=640, pnlPosTotOff=552, bitmapAbs=1360, accountsOff=1928, acctOwnerOff=184
+  // pnlPosTot u128 at absolute = 640 + 552 = 1192
   if (opts.pnlPosTot !== undefined) {
-    writeBigUint128LE(buf, 1144, opts.pnlPosTot);
+    writeBigUint128LE(buf, 1192, opts.pnlPosTot);
   }
 
   // ---- ACCOUNTS ----
-  // V1_LEGACY small: accountsOff=1880, bitmapAbs=1312, acctOwnerOff=200
-  const ACCOUNTS_OFF = 1880;
+  // V1M small: accountsOff=1928, bitmapAbs=1360, acctOwnerOff=184
+  const ACCOUNTS_OFF = 1928;
   const ACCOUNT_SIZE = 248;
-  const BITMAP_ABS   = 1312; // 640 + 672
+  const BITMAP_ABS   = 1360; // 640 + 720
 
   for (const acct of (opts.accounts ?? [])) {
     const base = ACCOUNTS_OFF + acct.idx * ACCOUNT_SIZE;
@@ -111,9 +111,9 @@ function buildV1SmallSlab(opts: {
     buf[base + 24] = 0; // kind = User
     writeBigInt128LE(buf, base + 32, acct.pnl);             // pnl i128
     writeBigInt128LE(buf, base + 80, acct.positionSize);    // positionSize i128
-    // owner pubkey at acctOwnerOff=200 (V1_LEGACY!)
+    // owner pubkey at acctOwnerOff=184 (V1M)
     const ownerSeed = `ACCT${String(acct.idx).padStart(7, "0")}11111111111111111111111`;
-    buf.set(Buffer.from(ownerSeed.slice(0, 32)), base + 200);
+    buf.set(Buffer.from(ownerSeed.slice(0, 32)), base + 184);
     setBitmapBit(buf, BITMAP_ABS, acct.idx);
   }
 
@@ -162,8 +162,17 @@ function makeConnection(opts: {
         rentEpoch: 0,
       };
     },
-    getProgramAccounts: async (_programId: PublicKey, _config?: unknown) => {
-      return opts.programAccounts ?? [];
+    getProgramAccounts: async (_programId: PublicKey, config?: unknown) => {
+      const accounts = opts.programAccounts ?? [];
+      // Filter-aware: honour the dataSize filter that discoverMarkets passes per-tier.
+      // Without this, every tier query returns all accounts, causing spurious duplicates
+      // and wrong-tier detection when the fixture size differs from the queried dataSize.
+      const cfg = config as { filters?: Array<{ dataSize?: number }> } | undefined;
+      const dataSizeFilter = cfg?.filters?.find(f => f.dataSize !== undefined)?.dataSize;
+      if (dataSizeFilter !== undefined) {
+        return accounts.filter(e => e.account.data.length === dataSizeFilter);
+      }
+      return accounts;
     },
   } as unknown as Connection;
 }
@@ -207,9 +216,9 @@ describe("discoverMarkets — mocked RPC (PERC-8339)", () => {
     expect(markets[0].header.version).toBe(1);
   });
 
-  it("detects layout correctly for the V1 small slab fixture (65_352 bytes)", () => {
+  it("detects layout correctly for the V1M small slab fixture (65_416 bytes)", () => {
     const slabData = buildV1SmallSlab();
-    expect(slabData.length).toBe(65_352); // V1_LEGACY small
+    expect(slabData.length).toBe(65_416); // V1M small
     const layout = detectSlabLayout(slabData.length);
     expect(layout).not.toBeNull();
     expect(layout!.maxAccounts).toBe(256);
@@ -253,9 +262,9 @@ describe("discoverMarkets — mocked RPC (PERC-8339)", () => {
     });
 
     const markets = await discoverMarkets(conn, PROGRAM_ID);
-    // V1_LEGACY slab (65_352 bytes) is discovered via memcmp fallback.
-    // The mock returns it for all tier queries; config field offsets may differ
-    // from the detected tier layout, so we only check that discovery succeeds.
+    // V1M slab (65_416 bytes) is discovered via the matching tier dataSize query.
+    // The filter-aware mock returns it only for the V1M-small tier query; config
+    // field offsets align with the V1M layout, so discovery succeeds cleanly.
     expect(markets.length).toBe(1);
     expect(markets[0].slabAddress.equals(SLAB_KEY)).toBe(true);
   });

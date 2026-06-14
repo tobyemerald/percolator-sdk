@@ -147,32 +147,38 @@ describe("stake encoders return Uint8Array (not Buffer)", () => {
   });
 
   it("decodeStakePool reads marketResolved and HWM fields from current reserved offsets", () => {
-    const buf = new Uint8Array(352);
+    // v2 StakePool: 384 bytes (was 352 in v1). pending_admin [u8;32] added at offset 288.
+    // _reserved (64 bytes) now starts at offset 320 (was 288 in v1).
+    const buf = new Uint8Array(384);
     const dv = new DataView(buf.buffer);
     buf[0] = 1;
     buf[1] = 2;
-    buf.set(PublicKey.default.toBytes(), 8);
-    buf.set(PublicKey.default.toBytes(), 40);
-    buf.set(PublicKey.default.toBytes(), 72);
-    buf.set(PublicKey.default.toBytes(), 104);
-    buf.set(PublicKey.default.toBytes(), 136);
-    dv.setBigUint64(168, 1n, true);
-    dv.setBigUint64(176, 2n, true);
-    dv.setBigUint64(184, 3n, true);
-    dv.setBigUint64(192, 4n, true);
-    dv.setBigUint64(200, 5n, true);
-    dv.setBigUint64(208, 6n, true);
-    dv.setBigUint64(216, 7n, true);
-    buf.set(PublicKey.default.toBytes(), 224);
-    dv.setBigUint64(256, 8n, true);
-    dv.setBigUint64(264, 9n, true);
-    dv.setBigUint64(272, 10n, true);
-    const reservedStart = 288;
-    buf[reservedStart + 9] = 1;
-    buf[reservedStart + 10] = 1;
-    dv.setUint16(reservedStart + 11, 777, true);
-    dv.setBigUint64(reservedStart + 16, 123n, true);
-    dv.setBigUint64(reservedStart + 24, 456n, true);
+    // _padding: bytes 4..8 (4 bytes)
+    buf.set(PublicKey.default.toBytes(), 8);   // slab @ 8
+    buf.set(PublicKey.default.toBytes(), 40);  // admin @ 40
+    buf.set(PublicKey.default.toBytes(), 72);  // collateralMint @ 72
+    buf.set(PublicKey.default.toBytes(), 104); // lpMint @ 104
+    buf.set(PublicKey.default.toBytes(), 136); // vault @ 136
+    dv.setBigUint64(168, 1n, true);  // totalDeposited
+    dv.setBigUint64(176, 2n, true);  // totalLpSupply
+    dv.setBigUint64(184, 3n, true);  // cooldownSlots
+    dv.setBigUint64(192, 4n, true);  // depositCap
+    dv.setBigUint64(200, 5n, true);  // totalFlushed
+    dv.setBigUint64(208, 6n, true);  // totalReturned
+    dv.setBigUint64(216, 7n, true);  // totalWithdrawn
+    buf.set(PublicKey.default.toBytes(), 224); // percolatorProgram @ 224
+    dv.setBigUint64(256, 8n, true);  // totalFeesEarned
+    dv.setBigUint64(264, 9n, true);  // lastFeeAccrualSlot
+    dv.setBigUint64(272, 10n, true); // lastVaultSnapshot
+    // poolMode @ 280 (u8), _mode_padding @ 281..288 (7 bytes)
+    // pending_admin [u8;32] @ 288..320 (new in v2; zeros = no pending proposal)
+    // _reserved (64 bytes) starts at 320 in v2 (was 288 in v1)
+    const reservedStart = 320;
+    buf[reservedStart + 9] = 1;   // market_resolved = true
+    buf[reservedStart + 10] = 1;  // hwm_enabled = true
+    dv.setUint16(reservedStart + 11, 777, true);   // hwm_floor_bps
+    dv.setBigUint64(reservedStart + 16, 123n, true); // epoch_high_water_tvl
+    dv.setBigUint64(reservedStart + 24, 456n, true); // hwm_last_epoch
 
     const pool = decodeStakePool(buf);
     expect(pool.marketResolved).toBe(true);

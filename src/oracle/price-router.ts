@@ -190,6 +190,7 @@ export const PYTH_SOLANA_FEEDS: Record<string, { symbol: string; mint: string }>
   // IOT
   "8bdd20f0c68bf7370a19389bbb3d17c1db7956c38efa08b2f3dd0e5db9b8c1ef": { symbol: "IOT", mint: "iotEVVZLEywoTn1QdwNPddxPWszn3zFhEot3MfL9fns" },
 };
+Object.freeze(PYTH_SOLANA_FEEDS);
 
 // Reverse lookup: mint → feed ID
 const MINT_TO_PYTH_FEED = new Map<string, { feedId: string; symbol: string }>();
@@ -297,10 +298,24 @@ export async function resolvePrice(
 
   // Add Pyth if available (highest priority for supported tokens)
   if (pythSource) {
-    // Enrich Pyth price from Jupiter or DEX if available
-    const refPrice = dexSources[0]?.price || jupiterSource?.price || 0;
-    pythSource.price = refPrice;
-    allSources.push(pythSource);
+    // Enrich Pyth price from Jupiter or DEX if available.
+    // Guard: only push a Pyth source when we have at least one live price
+    // reference — pushing price=0 would cause encodePushOraclePrice to throw
+    // at crank time on devnet/mainnet.
+    const dexPrice = dexSources[0]?.price ?? 0;
+    const jupPrice = jupiterSource?.price ?? 0;
+    const refPrice = dexPrice > 0 ? dexPrice : jupPrice > 0 ? jupPrice : 0;
+    if (refPrice > 0) {
+      pythSource.price = refPrice;
+      // Single-source reduced-confidence cap: when exactly one external source
+      // (DEX or Jupiter, not both) is available, cap Pyth confidence at 50 to
+      // signal reduced certainty to downstream callers.
+      const sourceCount = (dexPrice > 0 ? 1 : 0) + (jupPrice > 0 ? 1 : 0);
+      if (sourceCount === 1) {
+        pythSource.confidence = Math.min(pythSource.confidence, 50);
+      }
+      allSources.push(pythSource);
+    }
   }
 
   // Add DEX sources

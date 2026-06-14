@@ -7,6 +7,8 @@
  * Deployed mainnet: DC5fovFQD5SZYsetwvEqd4Wi4PFY1Yfnc669VMe6oa7F
  */
 import { PublicKey } from '@solana/web3.js';
+import { TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
+export { TOKEN_2022_PROGRAM_ID };
 /** Known stake program addresses per network. Mainnet is empty until deployed. */
 export declare const STAKE_PROGRAM_IDS: {
     readonly devnet: "6aJb1F9CDCVWCNYFwj8aQsVb696YnW6J1FznteHq4Q6k";
@@ -112,7 +114,9 @@ export declare function encodeStakeSetMarketResolved(): Uint8Array;
 /** @deprecated Removed on-chain in stake v3. Throws instead of emitting a dead instruction. */
 export declare function encodeStakeAdminSetInsurancePolicy(authority: PublicKey, minWithdrawBase: bigint | number, maxWithdrawBps: number, cooldownSlots: bigint | number): Uint8Array;
 /**
- * Decoded StakePool state (352 bytes on-chain).
+ * Decoded StakePool state (384 bytes on-chain — stake v2).
+ * v2 adds `pending_admin` ([u8;32]) at offset 288 for the two-step admin-rotation
+ * primitive (ProposeAdmin tag 5 / AcceptAdmin tag 6). Struct grew 352 → 384.
  * Includes PERC-272 (fee yield), PERC-313 (HWM), and PERC-303 (tranches).
  */
 export interface StakePoolState {
@@ -134,6 +138,12 @@ export interface StakePoolState {
     totalReturned: bigint;
     totalWithdrawn: bigint;
     percolatorProgram: PublicKey;
+    /**
+     * Pending admin for the two-step rotation (stake v2, offset 288).
+     * `null` when no proposal is outstanding (all-zero bytes on-chain).
+     * Set by ProposeAdmin (tag 5); consumed by AcceptAdmin (tag 6).
+     */
+    pendingAdmin: PublicKey | null;
     totalFeesEarned: bigint;
     lastFeeAccrualSlot: bigint;
     lastVaultSnapshot: bigint;
@@ -147,8 +157,11 @@ export interface StakePoolState {
     juniorTotalLp: bigint;
     juniorFeeMultBps: number;
 }
-/** Size of StakePool on-chain (bytes). */
-export declare const STAKE_POOL_SIZE = 352;
+/**
+ * Size of StakePool on-chain (bytes).
+ * v2: 384 (stake v1 was 352; `pending_admin: [u8;32]` added at offset 288).
+ */
+export declare const STAKE_POOL_SIZE = 384;
 /**
  * Decode a StakePool account from raw data buffer. * Uses DataView for all u64/u16 reads — browser-safe.
  */
@@ -226,32 +239,48 @@ export interface StakeAccounts {
 /**
  * Build account keys for InitPool instruction.
  * Returns array of {pubkey, isSigner, isWritable} in the order the program expects.
+ *
+ * @param a - Named accounts for the InitPool instruction.
+ * @param tokenProgramId - Token program to use. Defaults to SPL Token. Pass
+ *   `TOKEN_2022_PROGRAM_ID` for Token-2022 collateral mints.
  */
-export declare function initPoolAccounts(a: StakeAccounts['initPool']): {
+export declare function initPoolAccounts(a: StakeAccounts['initPool'], tokenProgramId?: PublicKey): {
     pubkey: PublicKey;
     isSigner: boolean;
     isWritable: boolean;
 }[];
 /**
  * Build account keys for Deposit instruction.
+ *
+ * @param a - Named accounts for the Deposit instruction.
+ * @param tokenProgramId - Token program to use. Defaults to SPL Token. Pass
+ *   `TOKEN_2022_PROGRAM_ID` for Token-2022 collateral mints.
  */
-export declare function depositAccounts(a: StakeAccounts['deposit']): {
+export declare function depositAccounts(a: StakeAccounts['deposit'], tokenProgramId?: PublicKey): {
     pubkey: PublicKey;
     isSigner: boolean;
     isWritable: boolean;
 }[];
 /**
  * Build account keys for Withdraw instruction.
+ *
+ * @param a - Named accounts for the Withdraw instruction.
+ * @param tokenProgramId - Token program to use. Defaults to SPL Token. Pass
+ *   `TOKEN_2022_PROGRAM_ID` for Token-2022 collateral mints.
  */
-export declare function withdrawAccounts(a: StakeAccounts['withdraw']): {
+export declare function withdrawAccounts(a: StakeAccounts['withdraw'], tokenProgramId?: PublicKey): {
     pubkey: PublicKey;
     isSigner: boolean;
     isWritable: boolean;
 }[];
 /**
  * Build account keys for FlushToInsurance instruction.
+ *
+ * @param a - Named accounts for the FlushToInsurance instruction.
+ * @param tokenProgramId - Token program to use. Defaults to SPL Token. Pass
+ *   `TOKEN_2022_PROGRAM_ID` for Token-2022 collateral mints.
  */
-export declare function flushToInsuranceAccounts(a: StakeAccounts['flushToInsurance']): {
+export declare function flushToInsuranceAccounts(a: StakeAccounts['flushToInsurance'], tokenProgramId?: PublicKey): {
     pubkey: PublicKey;
     isSigner: boolean;
     isWritable: boolean;

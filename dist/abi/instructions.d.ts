@@ -105,15 +105,15 @@ export declare const IX_TAG: {
      *
      * Wire: tag(1) + asset_index(u16) + kind(u8) + new_pubkey[32] = 36 bytes.
      *
-     * kind values (matches v16_program.rs ASSET_AUTH_* constants):
-     *   0 = INSURANCE       — insurance_authority
-     *   1 = ASSET_ADMIN     — asset_admin (burnable when asset_index != 0)
-     *   2 = BACKING_BUCKET  — backing_bucket_authority
-     *   3 = ORACLE          — oracle_authority
-     *   4 = INSURANCE_OPERATOR — insurance_operator
+     * kind values (matches v16_program.rs ASSET_AUTH_* constants, lines 5246-5250):
+     *   0 = ASSET_ADMIN       — asset_admin (burnable when asset_index != 0)
+     *   1 = INSURANCE         — insurance_authority
+     *   2 = INSURANCE_OPERATOR — insurance_operator
+     *   3 = BACKING_BUCKET    — backing_bucket_authority
+     *   4 = ORACLE            — oracle_authority
      *
-     * NOTE: The stake program uses kind=1 (ASSET_AUTH_INSURANCE=1 maps to the
-     * asset_admin route when targeting asset_index=0). See stake-program docs.
+     * NOTE: The stake program uses kind=0 (ASSET_AUTH_ADMIN) targeting asset_index=0.
+     * See stake-program docs.
      */
     readonly UpdateAssetAuthority: 65;
     /**
@@ -327,13 +327,24 @@ export declare const EXPECTED_SLAB_VERSION = 16;
  */
 export declare const V17_SLAB_MAGIC = 5784119745589622272n;
 /**
- * InitMarket instruction data (256 bytes total)
- * Layout: tag(1) + admin(32) + mint(32) + indexFeedId(32) +
- *         maxStaleSecs(8) + confFilter(2) + invert(1) + unitScale(4) +
- *         RiskParams(144)
+ * InitMarket instruction data — v17 wire format.
  *
- * Note: indexFeedId is the Pyth Pull feed ID (32 bytes hex), NOT an oracle pubkey.
- * The program validates PriceUpdateV2 accounts against this feed ID at runtime.
+ * v17 wire: tag(1) + market_params(226 bytes) = 227 bytes total.
+ *
+ * BREAKING vs v12.x: admin, collateralMint, feedId, staleness, conf, invert,
+ * and unitScale are NO LONGER encoded in instruction data. In v17 these are
+ * provided as account metas or configured separately via ConfigureHybridOracle /
+ * ConfigureEwmaMark. The v17 decoder reads only the market risk parameters.
+ *
+ * The old v12.x encodeInitMarket with admin[32]+mint[32]+feedId[32]+... inline
+ * is completely rejected by the v17 program — the first field read is now
+ * max_portfolio_assets(u16), which would parse the first 2 bytes of admin as
+ * a u16 portfolio count, producing invalid config or rejection at every call.
+ *
+ * Use `InitMarketArgs` (v12 legacy, now deprecated) or the new
+ * `InitMarketV17Args` with encodeInitMarket(). The v12-era fields that are
+ * absent from v17 (feedId, staleness, conf, invert, unitScale, maxMaintFee,
+ * warmupPeriodSlots) are silently ignored when present in InitMarketV17Args.
  */
 /**
  * Optional 66-byte extended tail for InitMarket (S-4).
@@ -438,47 +449,145 @@ export interface InitMarketArgs {
     extendedTail?: InitMarketExtendedTail;
 }
 /**
- * Encode InitMarket instruction data.
+ * Encode a Pyth feed ID (hex string) to 32-byte Uint8Array.
  *
- * Produces either a 344-byte base payload (no extended tail) or a 410-byte
- * payload (344 + 66 extended tail) depending on whether `args.extendedTail`
- * is provided and contains at least one non-zero field.
+ * @deprecated feedId is no longer encoded in InitMarket instruction data in v17.
+ * Oracle configuration is set separately via ConfigureHybridOracle (tag 34).
+ * Retained as a utility for off-chain feed ID validation.
+ */
+export declare const HEX_RE: RegExp;
+export declare function encodeFeedId(feedId: string): Uint8Array;
+/**
+ * InitMarket v17 argument interface.
  *
- * The program (percolator.rs:1527-1545) treats an empty `rest` as all-zero
- * defaults, so the 344-byte form is fully backward-compatible.
+ * admin and collateralMint are passed as account metas (accounts[0] and
+ * accounts[2] respectively), NOT in instruction data.
  *
- * @param args InitMarket arguments
- * @returns Encoded instruction bytes
+ * Oracle configuration (feedId, staleness, confFilter, invert, unitScale) is
+ * set separately via ConfigureHybridOracle (tag 34) or ConfigureEwmaMark (tag 35)
+ * after the market is created.
+ *
+ * Field order in wire format matches v16_program.rs InitMarket decoder exactly:
+ *   max_portfolio_assets, h_min, h_max, initial_price,
+ *   min_nonzero_mm_req, min_nonzero_im_req,
+ *   maintenance_margin_bps, initial_margin_bps,
+ *   max_trading_fee_bps, trade_fee_base_bps,
+ *   liquidation_fee_bps, liquidation_fee_cap, min_liquidation_abs,
+ *   max_price_move_bps_per_slot, max_accrual_dt_slots,
+ *   max_abs_funding_e9_per_slot, min_funding_lifetime_slots,
+ *   max_account_b_settlement_chunks, max_bankrupt_close_chunks,
+ *   max_bankrupt_close_lifetime_slots,
+ *   public_b_chunk_atoms, maintenance_fee_per_slot.
+ */
+export interface InitMarketV17Args {
+    /** Max number of portfolios (u16). Must be > 0 and <= WRAPPER_MAX_PORTFOLIO_ASSETS. */
+    maxPortfolioAssets: number;
+    /** Minimum funding horizon in slots (u64). */
+    hMin: bigint | string;
+    /** Maximum funding horizon in slots (u64). */
+    hMax: bigint | string;
+    /** Initial mark price in e6 units (u64). Must be > 0 and <= MAX_ORACLE_PRICE. */
+    initialPrice: bigint | string;
+    /** Minimum non-zero maintenance margin requirement (u128). */
+    minNonzeroMmReq: bigint | string;
+    /** Minimum non-zero initial margin requirement (u128). */
+    minNonzeroImReq: bigint | string;
+    /** Maintenance margin ratio in bps (u64). */
+    maintenanceMarginBps: bigint | string;
+    /** Initial margin ratio in bps (u64). */
+    initialMarginBps: bigint | string;
+    /** Maximum trading fee in bps (u64). Must be >= trade_fee_base_bps. */
+    maxTradingFeeBps: bigint | string;
+    /** Base trade fee in bps (u64). Must be <= max_trading_fee_bps. */
+    tradeFeeBaseBps: bigint | string;
+    /** Liquidation fee in bps (u64). */
+    liquidationFeeBps: bigint | string;
+    /** Liquidation fee cap in absolute units (u128). */
+    liquidationFeeCap: bigint | string;
+    /** Minimum liquidation size in absolute units (u128). */
+    minLiquidationAbs: bigint | string;
+    /** Maximum price movement per slot in bps (u64). */
+    maxPriceMoveBpsPerSlot: bigint | string;
+    /** Maximum accrual delta-time in slots (u64). */
+    maxAccrualDtSlots: bigint | string;
+    /** Maximum absolute funding rate in e9 per slot (u64). */
+    maxAbsFundingE9PerSlot: bigint | string;
+    /** Minimum funding lifetime in slots (u64). */
+    minFundingLifetimeSlots: bigint | string;
+    /** Maximum account-B settlement chunks per crank (u64). */
+    maxAccountBSettlementChunks: bigint | string;
+    /** Maximum bankrupt-close chunks per crank (u64). */
+    maxBankruptCloseChunks: bigint | string;
+    /** Maximum bankrupt-close lifetime in slots (u64). */
+    maxBankruptCloseLifetimeSlots: bigint | string;
+    /** Public-B chunk size in atoms (u128). */
+    publicBChunkAtoms: bigint | string;
+    /** Maintenance fee per slot in absolute units (u128). Must be <= MAX_PROTOCOL_FEE_ABS. */
+    maintenanceFeePerSlot: bigint | string;
+}
+/**
+ * Encode InitMarket instruction data (v17 wire format).
+ *
+ * Produces a 219-byte payload: tag(1) + market parameter fields (218 bytes).
+ * admin and collateralMint go into account metas (accounts[0] and accounts[2]).
+ *
+ * The old v12.x `InitMarketArgs` interface is accepted for source-compat via
+ * overload but the v12 fields (admin, collateralMint, feedId, staleness, conf,
+ * invert, unitScale, maxMaintenanceFeePerSlot, extendedTail, warmupPeriodSlots,
+ * newAccountFee, insuranceFloor, maxCrankStalenessSlots, liquidationBufferBps,
+ * minInitialDeposit) are silently ignored — provide `InitMarketV17Args` instead.
+ *
+ * @param args  v17 market parameters (InitMarketV17Args)
+ * @returns 227-byte Uint8Array
  *
  * @example
  * ```ts
- * const ix = encodeInitMarket({
- *   admin: adminPk,
- *   collateralMint: mintPk,
- *   indexFeedId: "0000...0000",
- *   // ... required fields ...
- *   extendedTail: {
- *     insuranceWithdrawMaxBps: 500,
- *     insuranceWithdrawCooldownSlots: 216000n,
- *     permissionlessResolveStaleSlots: 0n,
- *     fundingHorizonSlots: 0n,
- *     fundingKBps: 0n,
- *     fundingMaxPremiumBps: 0n,
- *     fundingMaxBpsPerSlot: 0n,
- *     markMinFee: 0n,
- *     forceCloseDelaySlots: 0n,
- *   },
+ * const data = encodeInitMarket({
+ *   maxPortfolioAssets: 256,
+ *   hMin: 1000n,
+ *   hMax: 100000n,
+ *   initialPrice: 50_000_000_000n,
+ *   minNonzeroMmReq: 1_000_000n,
+ *   minNonzeroImReq: 2_000_000n,
+ *   maintenanceMarginBps: 500n,
+ *   initialMarginBps: 1000n,
+ *   maxTradingFeeBps: 100n,
+ *   tradeFeeBaseBps: 30n,
+ *   liquidationFeeBps: 100n,
+ *   liquidationFeeCap: 10_000_000n,
+ *   minLiquidationAbs: 1_000_000n,
+ *   maxPriceMoveBpsPerSlot: 4n,
+ *   maxAccrualDtSlots: 600n,
+ *   maxAbsFundingE9PerSlot: 1000n,
+ *   minFundingLifetimeSlots: 50n,
+ *   maxAccountBSettlementChunks: 10n,
+ *   maxBankruptCloseChunks: 10n,
+ *   maxBankruptCloseLifetimeSlots: 500n,
+ *   publicBChunkAtoms: 1_000_000n,
+ *   maintenanceFeePerSlot: 0n,
  * });
  * ```
  */
-export declare function encodeInitMarket(args: InitMarketArgs): Uint8Array;
+export declare function encodeInitMarket(args: InitMarketV17Args | InitMarketArgs): Uint8Array;
 /**
- * InitUser instruction data (9 bytes)
+ * InitPortfolio / InitUser instruction data.
+ *
+ * v17 wire: tag(1) only — 1 byte total.
+ *
+ * BREAKING vs v12.x: the feePayment(u64) arg was removed. The program
+ * decoder at `1 => Self::InitPortfolio` reads no bytes after the tag byte.
+ * Sending extra bytes causes garbage reads in downstream decoder arms.
+ *
+ * @example
+ * ```ts
+ * const data = encodeInitUser();
+ * ```
  */
 export interface InitUserArgs {
-    feePayment: bigint | string;
+    /** @deprecated feePayment is ignored in v17 — kept for source compatibility only. */
+    feePayment?: bigint | string;
 }
-export declare function encodeInitUser(args: InitUserArgs): Uint8Array;
+export declare function encodeInitUser(_args?: InitUserArgs): Uint8Array;
 /**
  * InitLP instruction data (73 bytes)
  */
@@ -489,18 +598,47 @@ export interface InitLPArgs {
 }
 export declare function encodeInitLP(args: InitLPArgs): Uint8Array;
 /**
- * DepositCollateral instruction data (11 bytes)
+ * DepositCollateral instruction data.
+ *
+ * v17 wire: tag(1) + amount(u128 LE) = 17 bytes.
+ *
+ * BREAKING vs v12.x: userIdx(u16) removed; amount promoted u64→u128.
+ * The v17 decoder reads `amount: read_u128(&mut rest)?` at bytes [1..17].
+ * Sending the old 11-byte payload (userIdx+u64) gives a 10-byte rest which
+ * is 6 bytes short for read_u128 — InvalidInstructionData on every call.
+ *
+ * @param amount  Collateral to deposit (u128; supports sub-cent precision).
+ *
+ * @example
+ * ```ts
+ * const data = encodeDepositCollateral({ amount: 1_000_000n });
+ * ```
  */
 export interface DepositCollateralArgs {
-    userIdx: number;
+    /** @deprecated userIdx is no longer needed — portfolios are identified by account key in v17. */
+    userIdx?: number;
     amount: bigint | string;
 }
 export declare function encodeDepositCollateral(args: DepositCollateralArgs): Uint8Array;
 /**
- * WithdrawCollateral instruction data (11 bytes)
+ * WithdrawCollateral instruction data.
+ *
+ * v17 wire: tag(1) + amount(u128 LE) = 17 bytes.
+ *
+ * BREAKING vs v12.x: userIdx(u16) removed; amount promoted u64→u128.
+ * The v17 decoder reads `amount: read_u128(&mut rest)?` at bytes [1..17].
+ * The old 11-byte payload gives a 10-byte rest — InvalidInstructionData.
+ *
+ * @param amount  Collateral to withdraw (u128).
+ *
+ * @example
+ * ```ts
+ * const data = encodeWithdrawCollateral({ amount: 500_000n });
+ * ```
  */
 export interface WithdrawCollateralArgs {
-    userIdx: number;
+    /** @deprecated userIdx is no longer needed — portfolios are identified by account key in v17. */
+    userIdx?: number;
     amount: bigint | string;
 }
 export declare function encodeWithdrawCollateral(args: WithdrawCollateralArgs): Uint8Array;
@@ -606,14 +744,39 @@ export interface LiquidateAtOracleArgs {
 }
 export declare function encodeLiquidateAtOracle(args: LiquidateAtOracleArgs): Uint8Array;
 /**
- * CloseAccount instruction data (3 bytes)
+ * ClosePortfolio / CloseAccount instruction data.
+ *
+ * v17 wire: tag(1) only — 1 byte total.
+ *
+ * BREAKING vs v12.x: userIdx(u16) removed. The v17 decoder at
+ * `8 => Self::ClosePortfolio` reads no bytes after the tag. The extra 2
+ * bytes from the old userIdx field cause InvalidInstructionData.
+ *
+ * @example
+ * ```ts
+ * const data = encodeCloseAccount();
+ * ```
  */
 export interface CloseAccountArgs {
-    userIdx: number;
+    /** @deprecated userIdx is not read in v17; portfolios are identified by account key. */
+    userIdx?: number;
 }
-export declare function encodeCloseAccount(args: CloseAccountArgs): Uint8Array;
+export declare function encodeCloseAccount(_args?: CloseAccountArgs): Uint8Array;
 /**
- * TopUpInsurance instruction data (9 bytes)
+ * TopUpInsurance instruction data.
+ *
+ * v17 wire: tag(1) + amount(u128 LE) = 17 bytes.
+ *
+ * BREAKING vs v12.x: amount promoted u64→u128. The v17 decoder at tag 9
+ * reads `amount: read_u128(&mut rest)?` which requires 16 bytes after the
+ * tag. The old 8-byte u64 payload is 8 bytes short — InvalidInstructionData.
+ *
+ * @param amount  Amount to top up the insurance fund (u128).
+ *
+ * @example
+ * ```ts
+ * const data = encodeTopUpInsurance({ amount: 10_000_000n });
+ * ```
  */
 export interface TopUpInsuranceArgs {
     amount: bigint | string;
@@ -743,34 +906,58 @@ export interface SetOraclePriceCapArgs {
 /** @deprecated v12.x SetOraclePriceCap (old tag 16). Not in v17. */
 export declare function encodeSetOraclePriceCap(_args: SetOraclePriceCapArgs): Uint8Array;
 /**
- * ResolveMode for ResolveMarket — wrapper expects this byte explicitly per
- * upstream a7186d5 / PORT-1 / KL-WIRE-FORMAT-DIVERGENCE-2:
- *   0 = Ordinary  (default; settles at last good oracle / hyperp mark)
- *   1 = Degenerate (rate=0 dead-oracle settlement)
- *   2 = REMOVED   (decoder rejects with InvalidInstructionData)
+ * ResolveMode constants — retained for source compatibility with v12.x callers.
+ *
+ * @deprecated v17 ResolveMarket (tag 19) has no mode byte. These constants are
+ * no longer encoded into the instruction data. They may be used in logging or
+ * off-chain logic but must not be passed to encodeResolveMarket.
  */
 export declare const RESOLVE_MODE_ORDINARY: 0;
 export declare const RESOLVE_MODE_DEGENERATE: 1;
 export type ResolveMode = typeof RESOLVE_MODE_ORDINARY | typeof RESOLVE_MODE_DEGENERATE;
 /**
- * ResolveMarket instruction data (2 bytes: tag + mode).
- * Resolves a market — sets RESOLVED flag, positions force-closed via crank.
- * Requires admin oracle price (authority_price_e6) to be set first.
+ * ResolveMarket instruction data.
  *
- * @param args.mode 0 = Ordinary, 1 = Degenerate. Defaults to Ordinary.
+ * v17 wire: tag(1) only — 1 byte total.
  *
- * Wave 12-J: previously this encoder emitted only the tag byte; the wrapper's
- * decoder requires a `mode: u8` per PORT-1. Calling without `mode` defaults
- * to Ordinary (the historical implicit behavior).
+ * BREAKING vs v12.x PORT-1 / Wave-12-J: the mode byte has been REMOVED.
+ * The v17 decoder at `19 => Self::ResolveMarket` reads no bytes after the
+ * tag. Sending a 2-byte payload causes the extra byte to be consumed by the
+ * next read in a subsequent call, corrupting the instruction stream.
+ *
+ * The `mode` argument is accepted for source compatibility but is silently ignored.
+ *
+ * @example
+ * ```ts
+ * const data = encodeResolveMarket();
+ * ```
  */
-export declare function encodeResolveMarket(args?: {
+export declare function encodeResolveMarket(_args?: {
     mode?: ResolveMode;
 }): Uint8Array;
 /**
- * WithdrawInsurance instruction data (1 byte)
+ * WithdrawInsurance instruction data.
+ *
+ * v17 wire: tag(1) + amount(u128 LE) = 17 bytes.
+ *
+ * BREAKING vs v12.x: amount(u128) is now REQUIRED. The v17 decoder at
+ * tag 41 reads `amount: read_u128(&mut rest)?` — without 16 bytes of amount,
+ * read_u128 returns Err(InvalidInstructionData). Every call with the old
+ * 1-byte payload fails on devnet/mainnet.
+ *
  * Withdraw insurance fund to admin (requires RESOLVED and all positions closed).
+ *
+ * @param amount  Amount to withdraw from the insurance fund (u128).
+ *
+ * @example
+ * ```ts
+ * const data = encodeWithdrawInsurance({ amount: 5_000_000n });
+ * ```
  */
-export declare function encodeWithdrawInsurance(): Uint8Array;
+export interface WithdrawInsuranceArgs {
+    amount: bigint | string;
+}
+export declare function encodeWithdrawInsurance(args: WithdrawInsuranceArgs): Uint8Array;
 /**
  * AdminForceClose instruction data (3 bytes)
  * Force-close any position at oracle price (admin only, skips margin checks).
@@ -1618,16 +1805,30 @@ export interface DepositFeeCreditsArgs {
 }
 export declare function encodeDepositFeeCredits(_args: DepositFeeCreditsArgs): Uint8Array;
 /**
- * ConvertReleasedPnl (Tag 28) — voluntary PnL conversion with open position
- * (wrapper §10.4.1). Owner only.
+ * ConvertReleasedPnl (tag 28) — voluntary PnL conversion with open position.
+ * Owner only.
  *
- * Wrapper decode: src/percolator.rs:2103. Wire: tag(1) + user_idx u16(2)
- * + amount u64(8).
+ * v17 wire: tag(1) + amount(u128 LE) = 17 bytes.
+ *
+ * BREAKING vs v12.x: userIdx(u16) removed; amount promoted u64→u128.
+ * The v17 decoder at tag 28 reads `amount: read_u128(&mut rest)?` — the
+ * old 2-byte userIdx is consumed as the first 2 bytes of the u128, then
+ * only 8 bytes remain for the u128 tail (14 bytes short). Every call fails
+ * with InvalidInstructionData. Also, `userIdx` is stale — v17 portfolios
+ * are identified by account key alone.
  *
  * Accounts: see ACCOUNTS_CONVERT_RELEASED_PNL.
+ *
+ * @param amount  Amount of released PnL to convert (u128).
+ *
+ * @example
+ * ```ts
+ * const data = encodeConvertReleasedPnl({ amount: 1_000_000n });
+ * ```
  */
 export interface ConvertReleasedPnlArgs {
-    userIdx: number;
+    /** @deprecated userIdx is not needed in v17 — portfolios are identified by account key. */
+    userIdx?: number;
     amount: bigint | string;
 }
 export declare function encodeConvertReleasedPnl(args: ConvertReleasedPnlArgs): Uint8Array;
@@ -1654,22 +1855,33 @@ export declare function encodeUpdateAuthority(args: UpdateAuthorityArgs): Uint8A
 /**
  * Per-asset authority kind for UpdateAssetAuthority (tag 65).
  *
- * Source: v16_program.rs Instruction::UpdateAssetAuthority + ASSET_AUTH_* consts.
- *   0 = INSURANCE       — insurance_authority in AssetOracleProfileV16
- *   1 = ASSET_ADMIN     — asset_admin (only burnable when asset_index != 0)
- *   2 = BACKING_BUCKET  — backing_bucket_authority
- *   3 = ORACLE          — oracle_authority
- *   4 = INSURANCE_OPERATOR — insurance_operator
+ * Exact mapping from v16_program.rs lines 5246-5250:
+ *   ASSET_AUTH_ADMIN              = 0  →  AssetAdmin
+ *   ASSET_AUTH_INSURANCE          = 1  →  Insurance
+ *   ASSET_AUTH_INSURANCE_OPERATOR = 2  →  InsuranceOperator
+ *   ASSET_AUTH_BACKING_BUCKET     = 3  →  BackingBucket
+ *   ASSET_AUTH_ORACLE             = 4  →  Oracle
  *
- * Stake program uses kind=1 (ASSET_ADMIN) targeting asset_index=0 to bind
- * the stake PDA-custody vault into the insurance_authority slot.
+ * CRITICAL: the kind byte is sent on-chain and routes to a specific authority
+ * slot. Wrong values silently corrupt authority state:
+ *   - Calling with kind=Insurance(1) rotates `insurance_authority` (correct).
+ *   - Calling with the OLD wrong value 0 for Insurance hits `asset_admin` slot,
+ *     corrupting the market-level admin key instead.
+ *
+ * Stake program uses kind=AssetAdmin(0) targeting asset_index=0 to bind
+ * the stake vault PDA into the asset_admin authority slot.
  */
 export declare const ASSET_AUTH_KIND: {
-    readonly Insurance: 0;
-    readonly AssetAdmin: 1;
-    readonly BackingBucket: 2;
-    readonly Oracle: 3;
-    readonly InsuranceOperator: 4;
+    /** ASSET_AUTH_ADMIN = 0 in v16_program.rs:5246 — routes to asset_admin field */
+    readonly AssetAdmin: 0;
+    /** ASSET_AUTH_INSURANCE = 1 in v16_program.rs:5247 — routes to insurance_authority field */
+    readonly Insurance: 1;
+    /** ASSET_AUTH_INSURANCE_OPERATOR = 2 in v16_program.rs:5248 — routes to insurance_operator field */
+    readonly InsuranceOperator: 2;
+    /** ASSET_AUTH_BACKING_BUCKET = 3 in v16_program.rs:5249 — routes to backing_bucket_authority field */
+    readonly BackingBucket: 3;
+    /** ASSET_AUTH_ORACLE = 4 in v16_program.rs:5250 — routes to oracle_authority field */
+    readonly Oracle: 4;
 };
 export type AssetAuthKind = (typeof ASSET_AUTH_KIND)[keyof typeof ASSET_AUTH_KIND];
 /**
@@ -1687,6 +1899,7 @@ export type AssetAuthKind = (typeof ASSET_AUTH_KIND)[keyof typeof ASSET_AUTH_KIN
  * @example
  * ```ts
  * // Rotate insurance authority for asset 0
+ * // ASSET_AUTH_KIND.Insurance = 1 (routes to insurance_authority slot on-chain)
  * const data = encodeUpdateAssetAuthority({
  *   assetIndex: 0,
  *   kind: ASSET_AUTH_KIND.Insurance,

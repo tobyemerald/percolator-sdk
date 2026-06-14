@@ -234,32 +234,50 @@ console.log("\nTesting instruction encoders...\n");
   console.log("✓ IX_TAG values");
 }
 
-// Test InitUser encoding (9 bytes: tag + u64)
+// Test InitUser encoding (1 byte: tag only, no feePayment in v17)
+// v17 wire: InitPortfolio decoder reads ZERO bytes after the tag.
+// Sending extra bytes (e.g. an old u64 feePayment) causes garbage reads.
+// feePayment arg is accepted for source-compat but is silently ignored.
 {
   const data = encodeInitUser({ feePayment: "1000000" });
-  assert(data.length === 9, "InitUser length");
+  assert(data.length === 1, "InitUser length");
   assert(data[0] === IX_TAG.InitUser, "InitUser tag byte");
-  // fee = 1000000 = 0x0F4240 LE
-  assertBuf(data.subarray(1, 9), [64, 66, 15, 0, 0, 0, 0, 0], "InitUser fee");
+  // No fee bytes — v17 InitPortfolio takes no arguments after the tag.
+  const dataNoArgs = encodeInitUser();
+  assert(dataNoArgs.length === 1, "InitUser length (no args)");
+  assert(dataNoArgs[0] === IX_TAG.InitUser, "InitUser tag byte (no args)");
   console.log("✓ encodeInitUser");
 }
 
-// Test DepositCollateral encoding (11 bytes: tag + u16 + u64)
+// Test DepositCollateral encoding (17 bytes: tag + u128)
+// v17 wire: userIdx(u16) removed; amount promoted u64→u128.
+// userIdx arg is accepted for source-compat but is silently ignored.
 {
   const data = encodeDepositCollateral({ userIdx: 5, amount: "1000000" });
-  assert(data.length === 11, "DepositCollateral length");
+  assert(data.length === 17, "DepositCollateral length");
   assert(data[0] === IX_TAG.DepositCollateral, "DepositCollateral tag byte");
-  assertBuf(data.subarray(1, 3), [5, 0], "DepositCollateral userIdx");
-  assertBuf(data.subarray(3, 11), [64, 66, 15, 0, 0, 0, 0, 0], "DepositCollateral amount");
+  // amount=1000000 (u128 LE) at [1..17]: 0x0F4240 in low bytes, rest zero
+  assertBuf(
+    data.subarray(1, 17),
+    [64, 66, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "DepositCollateral amount"
+  );
   console.log("✓ encodeDepositCollateral");
 }
 
-// Test WithdrawCollateral encoding (11 bytes: tag + u16 + u64)
+// Test WithdrawCollateral encoding (17 bytes: tag + u128)
+// v17 wire: userIdx(u16) removed; amount promoted u64→u128.
+// userIdx arg is accepted for source-compat but is silently ignored.
 {
   const data = encodeWithdrawCollateral({ userIdx: 10, amount: "500000" });
-  assert(data.length === 11, "WithdrawCollateral length");
+  assert(data.length === 17, "WithdrawCollateral length");
   assert(data[0] === IX_TAG.WithdrawCollateral, "WithdrawCollateral tag byte");
-  assertBuf(data.subarray(1, 3), [10, 0], "WithdrawCollateral userIdx");
+  // amount=500000 (u128 LE) at [1..17]: 0x07A120 in low bytes, rest zero
+  assertBuf(
+    data.subarray(1, 17),
+    [32, 161, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "WithdrawCollateral amount"
+  );
   console.log("✓ encodeWithdrawCollateral");
 }
 
@@ -390,20 +408,29 @@ console.log("\nTesting instruction encoders...\n");
   console.log("✓ encodeLiquidateAtOracle");
 }
 
-// Test CloseAccount encoding (3 bytes: tag + u16)
+// Test CloseAccount encoding (1 byte: tag only, no userIdx in v17)
+// v17 wire: ClosePortfolio decoder reads ZERO bytes after the tag.
+// Sending the old 3-byte payload (tag + u16 userIdx) causes InvalidInstructionData.
+// userIdx arg is accepted for source-compat but is silently ignored.
 {
   const data = encodeCloseAccount({ userIdx: 100 });
-  assert(data.length === 3, "CloseAccount length");
+  assert(data.length === 1, "CloseAccount length");
   assert(data[0] === IX_TAG.CloseAccount, "CloseAccount tag byte");
-  assertBuf(data.subarray(1, 3), [100, 0], "CloseAccount userIdx");
   console.log("✓ encodeCloseAccount");
 }
 
-// Test TopUpInsurance encoding (9 bytes: tag + u64)
+// Test TopUpInsurance encoding (17 bytes: tag + u128)
+// v17 wire: amount promoted u64→u128; old 8-byte payload is 8 bytes short.
 {
   const data = encodeTopUpInsurance({ amount: "5000000" });
-  assert(data.length === 9, "TopUpInsurance length");
+  assert(data.length === 17, "TopUpInsurance length");
   assert(data[0] === IX_TAG.TopUpInsurance, "TopUpInsurance tag byte");
+  // amount=5000000 (u128 LE) at [1..17]: 0x4C4B40 in low bytes, rest zero
+  assertBuf(
+    data.subarray(1, 17),
+    [64, 75, 76, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "TopUpInsurance amount=5000000"
+  );
   console.log("✓ encodeTopUpInsurance");
 }
 
@@ -445,16 +472,29 @@ console.log("\nTesting instruction encoders...\n");
   console.log("✓ encodeInitLP");
 }
 
-// Test InitMarket encoding (360 bytes total: v12.15 adds hMax(8) to end of RiskParams)
-// Layout: tag(1) + admin(32) + mint(32) + indexFeedId(32) +
-//         maxStaleSecs(8) + confFilter(2) + invert(1) + unitScale(4) +
-//         markPrice(8) + maxMaintFee(16) + maxInsFloor(16) + minOracleCap(8) +
-//         RiskParams: hMin(8)+mmBps(8)+...+minIm(16)+hMax(8) = 200 bytes [+8 for hMax]
+// Test InitMarket encoding (219 bytes total: v17 wire)
+// v17 wire layout: tag(1) + max_portfolio_assets(u16=2) +
+//   h_min(u64) + h_max(u64) + initial_price(u64) +
+//   min_nonzero_mm_req(u128) + min_nonzero_im_req(u128) +
+//   maintenance_margin_bps(u64) + initial_margin_bps(u64) +
+//   max_trading_fee_bps(u64) + trade_fee_base_bps(u64) +
+//   liquidation_fee_bps(u64) + liquidation_fee_cap(u128) + min_liquidation_abs(u128) +
+//   max_price_move_bps_per_slot(u64) + max_accrual_dt_slots(u64) +
+//   max_abs_funding_e9_per_slot(u64) + min_funding_lifetime_slots(u64) +
+//   max_account_b_settlement_chunks(u64) + max_bankrupt_close_chunks(u64) +
+//   max_bankrupt_close_lifetime_slots(u64) +
+//   public_b_chunk_atoms(u128) + maintenance_fee_per_slot(u128)
+// Sizes: 1 + 2 + u64×15(120) + u128×6(96) = 219 bytes total
+//
+// BREAKING vs v12.x: admin, collateralMint, feedId, staleness, conf, invert,
+// unitScale and the 66-byte extended tail are NOT in the v17 wire. Those fields
+// are provided as account metas or configured via ConfigureHybridOracle (tag 34).
+// The v12 compat shim accepts old InitMarketArgs but silently ignores removed fields.
 {
-  // Use keypair-generated valid pubkeys
+  // v12 InitMarketArgs — removed fields (admin, collateralMint, indexFeedId, etc.)
+  // are silently ignored by the compat shim; only the risk param fields are encoded.
   const admin = PublicKey.unique();
   const mint = PublicKey.unique();
-  // Pyth feed ID for BTC/USD (example)
   const indexFeedId = "e62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43";
 
   const data = encodeInitMarket({
@@ -483,12 +523,8 @@ console.log("\nTesting instruction encoders...\n");
     minNonzeroMmReq: "1000",
     minNonzeroImReq: "2000",
   });
-  // v12.19 wrapper d760fc4: InitMarket base = 304 bytes. As of v2.0.6,
-  // encodeInitMarket ALWAYS emits the 66-byte extended tail (304 + 66 = 370)
-  // because the deployed wrapper rejects base-only payloads via an inner
-  // read_risk_params length check (percolator.rs:2413). When the caller
-  // omits `extendedTail`, wrapper-default values are used.
-  assert(data.length === 370, `InitMarket length: expected 370 (304 base + 66 ext), got ${data.length}`);
+  // v17 wire: 219 bytes (tag + 22 risk-param fields; no header block, no extended tail).
+  assert(data.length === 219, `InitMarket length: expected 219 (v17 wire), got ${data.length}`);
   assert(data[0] === IX_TAG.InitMarket, "InitMarket tag byte");
   console.log("✓ encodeInitMarket");
 }

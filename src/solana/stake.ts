@@ -8,7 +8,8 @@
  */
 
 import { PublicKey, SystemProgram, SYSVAR_RENT_PUBKEY, SYSVAR_CLOCK_PUBKEY } from '@solana/web3.js';
-import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
+export { TOKEN_2022_PROGRAM_ID };
 import { safeEnv } from '../config/program-ids.js';
 import { concatBytes } from '../abi/encode.js';
 
@@ -21,6 +22,7 @@ export const STAKE_PROGRAM_IDS = {
   devnet: '6aJb1F9CDCVWCNYFwj8aQsVb696YnW6J1FznteHq4Q6k',
   mainnet: 'DC5fovFQD5SZYsetwvEqd4Wi4PFY1Yfnc669VMe6oa7F',
 } as const;
+Object.freeze(STAKE_PROGRAM_IDS);
 
 /**
  * Resolve the stake program ID for the given network.
@@ -33,12 +35,17 @@ export const STAKE_PROGRAM_IDS = {
  * surface the gap instead of silently hitting the devnet program.
  */
 export function getStakeProgramId(network?: 'devnet' | 'mainnet'): PublicKey {
-  const override = safeEnv('STAKE_PROGRAM_ID');
-  if (override) {
-    console.warn(
-      `[percolator-sdk] STAKE_PROGRAM_ID env override active: ${override} — ensure this points to a trusted program`,
-    );
-    return new PublicKey(override);
+  // Only consult the env override when no explicit network arg is provided.
+  // An explicit network argument always wins so tests and multi-network callers
+  // are not silently redirected to a DevOps-set override address.
+  if (!network) {
+    const override = safeEnv('STAKE_PROGRAM_ID');
+    if (override) {
+      console.warn(
+        `[percolator-sdk] STAKE_PROGRAM_ID env override active: ${override} — ensure this points to a trusted program`,
+      );
+      return new PublicKey(override);
+    }
   }
 
   const detectedNetwork =
@@ -114,6 +121,7 @@ export const STAKE_IX = {
   /** Mark the pool as resolved after the wrapper market has been resolved directly. */
   SetMarketResolved: 18,
 } as const;
+Object.freeze(STAKE_IX);
 
 // ═══════════════════════════════════════════════════════════════
 // PDA Derivation
@@ -329,7 +337,9 @@ export function encodeStakeAdminSetInsurancePolicy(
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * Decoded StakePool state (352 bytes on-chain).
+ * Decoded StakePool state (384 bytes on-chain — stake v2).
+ * v2 adds `pending_admin` ([u8;32]) at offset 288 for the two-step admin-rotation
+ * primitive (ProposeAdmin tag 5 / AcceptAdmin tag 6). Struct grew 352 → 384.
  * Includes PERC-272 (fee yield), PERC-313 (HWM), and PERC-303 (tranches).
  */
 export interface StakePoolState {
@@ -354,6 +364,13 @@ export interface StakePoolState {
   totalWithdrawn: bigint;
 
   percolatorProgram: PublicKey;
+
+  /**
+   * Pending admin for the two-step rotation (stake v2, offset 288).
+   * `null` when no proposal is outstanding (all-zero bytes on-chain).
+   * Set by ProposeAdmin (tag 5); consumed by AcceptAdmin (tag 6).
+   */
+  pendingAdmin: PublicKey | null;
 
   // PERC-272: Fee yield fields
   totalFeesEarned: bigint;
@@ -382,8 +399,11 @@ export interface StakePoolState {
   juniorFeeMultBps: number;
 }
 
-/** Size of StakePool on-chain (bytes). */
-export const STAKE_POOL_SIZE = 352;
+/**
+ * Size of StakePool on-chain (bytes).
+ * v2: 384 (stake v1 was 352; `pending_admin: [u8;32]` added at offset 288).
+ */
+export const STAKE_POOL_SIZE = 384;
 
 /**
  * Decode a StakePool account from raw data buffer. * Uses DataView for all u64/u16 reads — browser-safe.
@@ -422,7 +442,14 @@ export function decodeStakePool(data: Uint8Array): StakePoolState {
   const poolMode = bytes[off]; off += 1;
   off += 7; // _mode_padding
 
-  // _reserved (64 bytes) starts at off
+  // stake v2: pending_admin [u8;32] at offset 288 (ProposeAdmin/AcceptAdmin two-step rotation).
+  // Zero bytes = no pending proposal.
+  const pendingAdminBytes = bytes.subarray(off, off + 32); off += 32;
+  const pendingAdmin = pendingAdminBytes.every(b => b === 0)
+    ? null
+    : new PublicKey(pendingAdminBytes);
+
+  // _reserved (64 bytes) starts at offset 320 in v2 (after pending_admin)
   const reservedStart = off;
   // _reserved[8] = version (skipped)
   // _reserved[9] = market_resolved
@@ -459,6 +486,7 @@ export function decodeStakePool(data: Uint8Array): StakePoolState {
     totalReturned,
     totalWithdrawn,
     percolatorProgram,
+    pendingAdmin,
     totalFeesEarned,
     lastFeeAccrualSlot,
     lastVaultSnapshot,
@@ -571,8 +599,15 @@ export interface StakeAccounts {
 /**
  * Build account keys for InitPool instruction.
  * Returns array of {pubkey, isSigner, isWritable} in the order the program expects.
+ *
+ * @param a - Named accounts for the InitPool instruction.
+ * @param tokenProgramId - Token program to use. Defaults to SPL Token. Pass
+ *   `TOKEN_2022_PROGRAM_ID` for Token-2022 collateral mints.
  */
-export function initPoolAccounts(a: StakeAccounts['initPool']) {
+export function initPoolAccounts(
+  a: StakeAccounts['initPool'],
+  tokenProgramId: PublicKey = TOKEN_PROGRAM_ID,
+) {
   return [
     { pubkey: a.admin, isSigner: true, isWritable: true },
     { pubkey: a.slab, isSigner: false, isWritable: false },
@@ -582,7 +617,7 @@ export function initPoolAccounts(a: StakeAccounts['initPool']) {
     { pubkey: a.vaultAuth, isSigner: false, isWritable: false },
     { pubkey: a.collateralMint, isSigner: false, isWritable: false },
     { pubkey: a.percolatorProgram, isSigner: false, isWritable: false },
-    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: tokenProgramId, isSigner: false, isWritable: false },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
   ];
@@ -590,8 +625,15 @@ export function initPoolAccounts(a: StakeAccounts['initPool']) {
 
 /**
  * Build account keys for Deposit instruction.
+ *
+ * @param a - Named accounts for the Deposit instruction.
+ * @param tokenProgramId - Token program to use. Defaults to SPL Token. Pass
+ *   `TOKEN_2022_PROGRAM_ID` for Token-2022 collateral mints.
  */
-export function depositAccounts(a: StakeAccounts['deposit']) {
+export function depositAccounts(
+  a: StakeAccounts['deposit'],
+  tokenProgramId: PublicKey = TOKEN_PROGRAM_ID,
+) {
   return [
     { pubkey: a.user, isSigner: true, isWritable: false },
     { pubkey: a.pool, isSigner: false, isWritable: true },
@@ -601,7 +643,7 @@ export function depositAccounts(a: StakeAccounts['deposit']) {
     { pubkey: a.userLpAta, isSigner: false, isWritable: true },
     { pubkey: a.vaultAuth, isSigner: false, isWritable: false },
     { pubkey: a.depositPda, isSigner: false, isWritable: true },
-    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: tokenProgramId, isSigner: false, isWritable: false },
     { pubkey: SYSVAR_CLOCK_PUBKEY, isSigner: false, isWritable: false },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
   ];
@@ -609,8 +651,15 @@ export function depositAccounts(a: StakeAccounts['deposit']) {
 
 /**
  * Build account keys for Withdraw instruction.
+ *
+ * @param a - Named accounts for the Withdraw instruction.
+ * @param tokenProgramId - Token program to use. Defaults to SPL Token. Pass
+ *   `TOKEN_2022_PROGRAM_ID` for Token-2022 collateral mints.
  */
-export function withdrawAccounts(a: StakeAccounts['withdraw']) {
+export function withdrawAccounts(
+  a: StakeAccounts['withdraw'],
+  tokenProgramId: PublicKey = TOKEN_PROGRAM_ID,
+) {
   return [
     { pubkey: a.user, isSigner: true, isWritable: false },
     { pubkey: a.pool, isSigner: false, isWritable: true },
@@ -620,15 +669,22 @@ export function withdrawAccounts(a: StakeAccounts['withdraw']) {
     { pubkey: a.userCollateralAta, isSigner: false, isWritable: true },
     { pubkey: a.vaultAuth, isSigner: false, isWritable: false },
     { pubkey: a.depositPda, isSigner: false, isWritable: true },
-    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: tokenProgramId, isSigner: false, isWritable: false },
     { pubkey: SYSVAR_CLOCK_PUBKEY, isSigner: false, isWritable: false },
   ];
 }
 
 /**
  * Build account keys for FlushToInsurance instruction.
+ *
+ * @param a - Named accounts for the FlushToInsurance instruction.
+ * @param tokenProgramId - Token program to use. Defaults to SPL Token. Pass
+ *   `TOKEN_2022_PROGRAM_ID` for Token-2022 collateral mints.
  */
-export function flushToInsuranceAccounts(a: StakeAccounts['flushToInsurance']) {
+export function flushToInsuranceAccounts(
+  a: StakeAccounts['flushToInsurance'],
+  tokenProgramId: PublicKey = TOKEN_PROGRAM_ID,
+) {
   return [
     { pubkey: a.caller, isSigner: true, isWritable: false },
     { pubkey: a.pool, isSigner: false, isWritable: true },
@@ -637,6 +693,6 @@ export function flushToInsuranceAccounts(a: StakeAccounts['flushToInsurance']) {
     { pubkey: a.slab, isSigner: false, isWritable: true },
     { pubkey: a.wrapperVault, isSigner: false, isWritable: true },
     { pubkey: a.percolatorProgram, isSigner: false, isWritable: false },
-    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: tokenProgramId, isSigner: false, isWritable: false },
   ];
 }

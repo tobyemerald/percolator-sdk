@@ -142,7 +142,7 @@ function computePnlPct(pnl: bigint, capital: bigint): bigint {
  * ```
  */
 export function isAdlTriggered(slabData: Uint8Array): boolean {
-  const layout = detectSlabLayout(slabData.length);
+  const layout = detectSlabLayout(slabData.length, slabData);
   if (!layout) return false;
   try {
     const engine = parseEngine(slabData);
@@ -191,7 +191,7 @@ export async function fetchAdlRankedPositions(
  * Useful when you already have the slab data (e.g., from a subscription).
  */
 export function rankAdlPositions(slabData: Uint8Array): AdlRankingResult {
-  const layout = detectSlabLayout(slabData.length);
+  const layout = detectSlabLayout(slabData.length, slabData);
 
   let pnlPosTot = 0n;
   try {
@@ -554,6 +554,40 @@ export async function fetchAdlRankings(
     );
   }
 
-  const json = await res.json() as AdlApiResult;
-  return json;
+  const json: unknown = await res.json();
+
+  // Runtime validation — the API response shape is not guaranteed
+  if (typeof json !== "object" || json === null) {
+    throw new Error("fetchAdlRankings: API returned non-object response");
+  }
+  const obj = json as Record<string, unknown>;
+  if (!Array.isArray(obj.rankings)) {
+    throw new Error("fetchAdlRankings: API response missing rankings array");
+  }
+  if (typeof obj.adlNeeded !== "boolean") {
+    throw new Error(`fetchAdlRankings: invalid adlNeeded field: ${obj.adlNeeded}`);
+  }
+  if (typeof obj.capExceeded !== "boolean") {
+    throw new Error(`fetchAdlRankings: invalid capExceeded field: ${obj.capExceeded}`);
+  }
+  if (typeof obj.slabAddress !== "string") {
+    throw new Error(`fetchAdlRankings: invalid slabAddress field: ${obj.slabAddress}`);
+  }
+  if (typeof obj.pnlPosTot !== "string") {
+    throw new Error(`fetchAdlRankings: invalid pnlPosTot field: ${obj.pnlPosTot}`);
+  }
+  if (typeof obj.maxPnlCap !== "string") {
+    throw new Error(`fetchAdlRankings: invalid maxPnlCap field: ${obj.maxPnlCap}`);
+  }
+  for (const entry of obj.rankings) {
+    if (typeof entry !== "object" || entry === null) {
+      throw new Error("fetchAdlRankings: invalid ranking entry (not an object)");
+    }
+    const r = entry as Record<string, unknown>;
+    if (typeof r.idx !== "number" || !Number.isInteger(r.idx) || r.idx < 0) {
+      throw new Error(`fetchAdlRankings: invalid ranking idx: ${r.idx}`);
+    }
+  }
+
+  return json as AdlApiResult;
 }

@@ -63,21 +63,21 @@ describe("IX_TAG values", () => {
 });
 
 describe("instruction encoders", () => {
-  it("encodeInitUser produces 9 bytes", () => {
+  it("encodeInitUser produces 1 byte (v17: tag only, feePayment removed)", () => {
     const data = encodeInitUser({ feePayment: "1000000" });
-    expect(data.length).toBe(9);
+    expect(data.length).toBe(1);
     expect(data[0]).toBe(IX_TAG.InitUser);
   });
 
-  it("encodeDepositCollateral produces 11 bytes", () => {
+  it("encodeDepositCollateral produces 17 bytes (v17: tag + u128, userIdx removed)", () => {
     const data = encodeDepositCollateral({ userIdx: 5, amount: "1000000" });
-    expect(data.length).toBe(11);
+    expect(data.length).toBe(17);
     expect(data[0]).toBe(IX_TAG.DepositCollateral);
   });
 
-  it("encodeWithdrawCollateral produces 11 bytes", () => {
+  it("encodeWithdrawCollateral produces 17 bytes (v17: tag + u128, userIdx removed)", () => {
     const data = encodeWithdrawCollateral({ userIdx: 10, amount: "500000" });
-    expect(data.length).toBe(11);
+    expect(data.length).toBe(17);
     expect(data[0]).toBe(IX_TAG.WithdrawCollateral);
   });
 
@@ -128,15 +128,15 @@ describe("instruction encoders", () => {
     expect(data[0]).toBe(IX_TAG.LiquidateAtOracle);
   });
 
-  it("encodeCloseAccount produces 3 bytes", () => {
+  it("encodeCloseAccount produces 1 byte (v17: tag only, userIdx removed)", () => {
     const data = encodeCloseAccount({ userIdx: 100 });
-    expect(data.length).toBe(3);
+    expect(data.length).toBe(1);
     expect(data[0]).toBe(IX_TAG.CloseAccount);
   });
 
-  it("encodeTopUpInsurance produces 9 bytes", () => {
+  it("encodeTopUpInsurance produces 17 bytes (v17: tag + u128, was tag + u64 = 9)", () => {
     const data = encodeTopUpInsurance({ amount: "5000000" });
-    expect(data.length).toBe(9);
+    expect(data.length).toBe(17);
     expect(data[0]).toBe(IX_TAG.TopUpInsurance);
   });
 
@@ -156,7 +156,10 @@ describe("instruction encoders", () => {
     expect(data[0]).toBe(IX_TAG.InitLP);
   });
 
-  it("encodeInitMarket produces 370-byte payload (304 base + 66 ext tail)", () => {
+  it("encodeInitMarket produces 219-byte payload (v17: INIT_MARKET_V17_LEN, no ext tail)", () => {
+    // v17 BREAKING: admin/collateralMint go into accounts, not instruction data.
+    // feedId/staleness/confFilter/invert/unitScale are ignored (set via ConfigureHybridOracle).
+    // Fixed 219-byte payload: tag(1) + 22 field structs (218 bytes).
     const data = encodeInitMarket({
       admin: PublicKey.unique(), collateralMint: PublicKey.unique(),
       indexFeedId: "e62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43",
@@ -168,12 +171,14 @@ describe("instruction encoders", () => {
       liquidationBufferBps: "50", minLiquidationAbs: "1000000",
       minNonzeroMmReq: "1000", minNonzeroImReq: "2000",
     });
-    expect(data.length).toBe(370);
+    expect(data.length).toBe(219);
     expect(data[0]).toBe(IX_TAG.InitMarket);
   });
 
-  it("encodeInitMarket rejects non-hex feed ID", () => {
-    const args = {
+  it("encodeInitMarket ignores non-hex feed ID (v17: feedId field silently ignored, no validation)", () => {
+    // v17 BREAKING: indexFeedId is ignored (oracle config moved to ConfigureHybridOracle tag 34).
+    // The old non-hex validation no longer fires. Passes as long as required fields present.
+    const data = encodeInitMarket({
       admin: PublicKey.unique(), collateralMint: PublicKey.unique(),
       indexFeedId: "g".repeat(64),
       maxStalenessSecs: "60", confFilterBps: 50, invert: 0, unitScale: 0, initialMarkPriceE6: "0",
@@ -182,12 +187,14 @@ describe("instruction encoders", () => {
       riskReductionThreshold: "1000000000", maintenanceFeePerSlot: "100",
       maxCrankStalenessSlots: "50", liquidationFeeBps: "100", liquidationFeeCap: "10000000",
       liquidationBufferBps: "50", minLiquidationAbs: "1000000",
-    };
-    expect(() => encodeInitMarket(args)).toThrow("non-hex");
+      minNonzeroMmReq: "1000", minNonzeroImReq: "2000",
+    });
+    expect(data.length).toBe(219);
   });
 
-  it("encodeInitMarket rejects wrong-length feed ID", () => {
-    const args = {
+  it("encodeInitMarket ignores wrong-length feed ID (v17: feedId silently ignored)", () => {
+    // v17: feedId no longer validated or encoded — any value (even "abcd") is accepted.
+    const data = encodeInitMarket({
       admin: PublicKey.unique(), collateralMint: PublicKey.unique(),
       indexFeedId: "abcd",
       maxStalenessSecs: "60", confFilterBps: 50, invert: 0, unitScale: 0, initialMarkPriceE6: "0",
@@ -196,11 +203,13 @@ describe("instruction encoders", () => {
       riskReductionThreshold: "1000000000", maintenanceFeePerSlot: "100",
       maxCrankStalenessSlots: "50", liquidationFeeBps: "100", liquidationFeeCap: "10000000",
       liquidationBufferBps: "50", minLiquidationAbs: "1000000",
-    };
-    expect(() => encodeInitMarket(args)).toThrow("4 chars");
+      minNonzeroMmReq: "1000", minNonzeroImReq: "2000",
+    });
+    expect(data.length).toBe(219);
   });
 
-  it("encodeInitMarket accepts 0x-prefixed feed ID", () => {
+  it("encodeInitMarket accepts 0x-prefixed feed ID (v17: feedId silently ignored)", () => {
+    // v17: feedId ignored → size is 219 regardless of feedId format.
     const data = encodeInitMarket({
       admin: PublicKey.unique(), collateralMint: PublicKey.unique(),
       indexFeedId: "0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43",
@@ -212,11 +221,14 @@ describe("instruction encoders", () => {
       liquidationBufferBps: "50", minLiquidationAbs: "1000000",
       minNonzeroMmReq: "1000", minNonzeroImReq: "2000",
     });
-    expect(data.length).toBe(370);
+    expect(data.length).toBe(219);
   });
 
-  // Wave 9: v2 extended tail with max_price_move_bps_per_slot override
-  it("encodeInitMarket emits 378-byte payload with v2 extended tail (max_price_move override)", () => {
+  // v17: extendedTail is ignored; maxPriceMoveBpsPerSlot maps to a field in the fixed body.
+  // The 219-byte payload includes maxPriceMoveBpsPerSlot as an inline u64 field.
+  it("encodeInitMarket emits 219-byte payload with extendedTail (v17: extendedTail ignored, fixed size)", () => {
+    // v17 BREAKING: extendedTail no longer appended. maxPriceMoveBpsPerSlot from extendedTail
+    // is mapped into the inline body field. Total is still 219 bytes.
     const data = encodeInitMarket({
       admin: PublicKey.unique(), collateralMint: PublicKey.unique(),
       indexFeedId: "e62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43",
@@ -240,15 +252,13 @@ describe("instruction encoders", () => {
         maxPriceMoveBpsPerSlot: 7n,
       },
     });
-    // 304 base + 74 v2 tail = 378
-    expect(data.length).toBe(378);
-    // Last 8 bytes are max_price_move_bps_per_slot u64 LE = 7
-    const tailStart = data.length - 8;
-    const view = new DataView(data.buffer, data.byteOffset + tailStart, 8);
-    expect(view.getBigUint64(0, true)).toBe(7n);
+    // v17: always 219 bytes — no variable tail
+    expect(data.length).toBe(219);
   });
 
-  it("encodeInitMarket rejects zero maxPriceMoveBpsPerSlot in v2 tail", () => {
+  it("encodeInitMarket does not throw for zero maxPriceMoveBpsPerSlot in extendedTail (v17: validation removed)", () => {
+    // v17: maxPriceMoveBpsPerSlot defaults to 4n when 0 is passed via extendedTail shim.
+    // The old v12 "must be > 0" validation no longer applies.
     expect(() =>
       encodeInitMarket({
         admin: PublicKey.unique(), collateralMint: PublicKey.unique(),
@@ -273,7 +283,7 @@ describe("instruction encoders", () => {
           maxPriceMoveBpsPerSlot: 0n,
         },
       }),
-    ).toThrow("must be > 0");
+    ).not.toThrow();
   });
 
   it("encodeCloseSlab produces 1 byte", () => {
@@ -281,19 +291,22 @@ describe("instruction encoders", () => {
     expect(encodeCloseSlab()[0]).toBe(IX_TAG.CloseSlab);
   });
 
-  it("encodeResolveMarket produces tag + mode (default Ordinary = 2 bytes)", () => {
+  it("encodeResolveMarket produces 1 byte (v17: tag only, mode byte removed)", () => {
+    // v17 BREAKING: mode byte removed. The decoder at tag 19 reads no bytes after the tag.
+    // `mode` arg still accepted for source compatibility but is silently ignored.
     const ord = encodeResolveMarket();
-    expect(ord.length).toBe(2);
+    expect(ord.length).toBe(1);
     expect(ord[0]).toBe(IX_TAG.ResolveMarket);
-    expect(ord[1]).toBe(0); // Ordinary
     const deg = encodeResolveMarket({ mode: 1 });
-    expect(deg.length).toBe(2);
+    expect(deg.length).toBe(1);
     expect(deg[0]).toBe(IX_TAG.ResolveMarket);
-    expect(deg[1]).toBe(1); // Degenerate
   });
 
-  it("encodeWithdrawInsurance produces 1 byte", () => {
-    expect(encodeWithdrawInsurance()[0]).toBe(IX_TAG.WithdrawInsurance);
+  it("encodeWithdrawInsurance produces 17 bytes (v17: tag + u128 amount required)", () => {
+    // v17 BREAKING: amount(u128) is now REQUIRED. Old 1-byte payload fails on-chain.
+    const data = encodeWithdrawInsurance({ amount: "5000000" });
+    expect(data.length).toBe(17);
+    expect(data[0]).toBe(IX_TAG.WithdrawInsurance);
   });
 
   it("removed and disabled encoders throw instead of emitting dead bytes", () => {
@@ -369,7 +382,8 @@ describe("truncated instruction payloads", () => {
     ["InitMarket", () => encodeInitMarket(initMarketArgs)],
     ["CloseSlab", () => encodeCloseSlab()],
     ["ResolveMarket", () => encodeResolveMarket()],
-    ["WithdrawInsurance", () => encodeWithdrawInsurance()],
+    // v17: encodeWithdrawInsurance now requires amount arg (tag + u128 = 17 bytes)
+    ["WithdrawInsurance", () => encodeWithdrawInsurance({ amount: "5000000" })],
   ];
 
   it.each(cases)(

@@ -13,7 +13,7 @@
  *   - Errors 42-46 are NFT/B-3 (new in v17).
  *   - v12.x errors 28-65 are entirely removed.
  */
-interface ErrorInfo {
+export interface ErrorInfo {
   name: string;
   hint: string;
 }
@@ -211,6 +211,8 @@ export const PERCOLATOR_ERRORS: Record<number, ErrorInfo> = {
     hint: "Portfolio provenance mismatch for NFT transfer. The portfolio was not created for this market group.",
   },
 };
+for (const v of Object.values(PERCOLATOR_ERRORS)) Object.freeze(v);
+Object.freeze(PERCOLATOR_ERRORS);
 
 /**
  * Decode a custom program error code to its info.

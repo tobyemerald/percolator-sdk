@@ -73,9 +73,15 @@ function buildV12_1SlabSmall(): Uint8Array {
   // V12_1 small tier: 256 accounts, 84152 bytes
   const TOTAL = 84152;
   const ENGINE_OFF = 648;
-  const BITMAP_OFF_REL = 368;       // engine-relative (1016 - 648)
+  // V12_1 HOST engineBitmapOff = 1016 (relative to engineOff).
+  // Was 368 in the old test (wrong: that was 1016 - 648 = absolute - engineOff, not the
+  // relative offset). src/solana/slab.ts V12_1_ENGINE_BITMAP_OFF = 1016.
+  const BITMAP_OFF_REL = 1016;      // engine-relative (V12_1_ENGINE_BITMAP_OFF)
   const ACCOUNT_SIZE = 320;
-  const ACCOUNTS_OFF = 1584;        // absolute: 648 + ceil((368+32+18+512)/8)*8 = 648 + 936
+  // accountsOff = engineOff + ceil((bitmapOff + bitmapBytes + postBitmap + nextFreeBytes)/8)*8
+  //             = 648 + ceil((1016 + 32 + 18 + 512) / 8) * 8
+  //             = 648 + ceil(1578/8)*8 = 648 + 198*8 = 648 + 1584 = 2232
+  const ACCOUNTS_OFF = 2232;        // absolute: 648 + 1584
 
   const buf = new Uint8Array(TOTAL);
   const dv = new DataView(buf.buffer);
@@ -94,8 +100,8 @@ function buildV12_1SlabSmall(): Uint8Array {
   // For the magic-valid check only — nonce/lastThrUpdateSlot live at specific offsets in V1 header.
   // (We don't test readNonce on V12_1 here — that's covered in slab-parser.test.ts)
 
-  // Engine bitmap area: absolute = ENGINE_OFF + BITMAP_OFF_REL = 648 + 368 = 1016
-  // numUsedAccounts (u16) is at ENGINE_OFF + BITMAP_OFF_REL + bitmapBytes(4*8=32) = 1016+32 = 1048
+  // Engine bitmap area: absolute = ENGINE_OFF + BITMAP_OFF_REL = 648 + 1016 = 1664
+  // numUsedAccounts (u16) is at ENGINE_OFF + BITMAP_OFF_REL + bitmapBytes(4*8=32) = 1664+32 = 1696
   // We want 1 used account (index 0) for parseAccount testing.
   const bitmapAbs = ENGINE_OFF + BITMAP_OFF_REL;
   // Set bit 0 in the bitmap (first word, LSB = account index 0)
@@ -397,30 +403,38 @@ describe("encodeKeeperCrank — deprecated in v17 (throws removedInstruction)", 
   });
 });
 
-describe("encodeDepositCollateral — tag + userIdx(u16) + amount(u64) roundtrip", () => {
-  it("encodes tag=3, userIdx=5, amount=1000000", () => {
+describe("encodeDepositCollateral — tag + amount(u128) roundtrip (v17: userIdx removed)", () => {
+  // v17 BREAKING: wire format is tag(1) + amount(u128 LE) = 17 bytes.
+  // userIdx arg is silently ignored; amount promoted from u64 to u128.
+  it("encodes tag=3, amount=1000000 (userIdx silently ignored in v17)", () => {
     const data = encodeDepositCollateral({ userIdx: 5, amount: "1000000" });
-    expect(data.length).toBe(11);
+    expect(data.length).toBe(17);
     expect(data[0]).toBe(IX_TAG.DepositCollateral);  // tag = 3
     expect(data[0]).toBe(3);
-    expect(readU16LE(data, 1)).toBe(5);              // userIdx
-    expect(readU64LE(data, 3)).toBe(1_000_000n);     // amount
+    // amount is at bytes [1..17] as u128 LE; lo 8 bytes = amount for small values
+    expect(readU64LE(data, 1)).toBe(1_000_000n);     // amount (lo 64 bits of u128)
+    expect(readU64LE(data, 9)).toBe(0n);              // amount (hi 64 bits of u128 = 0)
   });
 
-  it("encodes large amount (u64 max)", () => {
+  it("encodes large amount (u128 supports values beyond u64 max)", () => {
+    // v17: amount is u128 so u64 max fits exactly in the lo 8 bytes
     const data = encodeDepositCollateral({ userIdx: 0, amount: "18446744073709551615" });
-    expect(readU64LE(data, 3)).toBe(18446744073709551615n);
+    expect(readU64LE(data, 1)).toBe(18446744073709551615n);  // lo bits = u64 max
+    expect(readU64LE(data, 9)).toBe(0n);                     // hi bits = 0
   });
 });
 
-describe("encodeWithdrawCollateral — tag + userIdx(u16) + amount(u64) roundtrip", () => {
-  it("encodes tag=4, userIdx=10, amount=500000", () => {
+describe("encodeWithdrawCollateral — tag + amount(u128) roundtrip (v17: userIdx removed)", () => {
+  // v17 BREAKING: wire format is tag(1) + amount(u128 LE) = 17 bytes.
+  // userIdx arg is silently ignored; amount promoted from u64 to u128.
+  it("encodes tag=4, amount=500000 (userIdx silently ignored in v17)", () => {
     const data = encodeWithdrawCollateral({ userIdx: 10, amount: "500000" });
-    expect(data.length).toBe(11);
+    expect(data.length).toBe(17);
     expect(data[0]).toBe(IX_TAG.WithdrawCollateral); // tag = 4
     expect(data[0]).toBe(4);
-    expect(readU16LE(data, 1)).toBe(10);             // userIdx
-    expect(readU64LE(data, 3)).toBe(500_000n);       // amount
+    // amount is at bytes [1..17] as u128 LE; lo 8 bytes = amount for small values
+    expect(readU64LE(data, 1)).toBe(500_000n);       // amount (lo 64 bits of u128)
+    expect(readU64LE(data, 9)).toBe(0n);              // hi bits = 0
   });
 });
 
@@ -448,7 +462,8 @@ describe("V12_1 slab — layout detection and field offsets", () => {
     expect(layout).not.toBeNull();
     expect(layout!.engineOff).toBe(648);
     expect(layout!.accountSize).toBe(320);
-    expect(layout!.engineBitmapOff).toBe(368); // engine-relative (1016 - 648)
+    // V12_1 HOST engineBitmapOff = 1016 (engine-relative; absolute = 648 + 1016 = 1664)
+    expect(layout!.engineBitmapOff).toBe(1016);
   });
 
   it("detectSlabLayout V12_1 small: maxAccounts=256", () => {
@@ -456,32 +471,33 @@ describe("V12_1 slab — layout detection and field offsets", () => {
     expect(layout!.maxAccounts).toBe(256);
   });
 
-  it("detectSlabLayout V12_1 medium (331544 bytes): ENGINE_OFF=648, ACCOUNT_SIZE=320, BITMAP_OFF=368", () => {
+  it("detectSlabLayout V12_1 medium (331544 bytes): ENGINE_OFF=648, ACCOUNT_SIZE=320, BITMAP_OFF=1016", () => {
     const layout = detectSlabLayout(331544);
     expect(layout).not.toBeNull();
     expect(layout!.engineOff).toBe(648);
     expect(layout!.accountSize).toBe(320);
-    expect(layout!.engineBitmapOff).toBe(368); // engine-relative
+    // V12_1 HOST engineBitmapOff = 1016 (engine-relative)
+    expect(layout!.engineBitmapOff).toBe(1016);
   });
 
   it("detectSlabLayout V12_1 accountsOff for small (256 accts)", () => {
     const layout = detectSlabLayout(84152);
-    // bitmapOff=368, bitmapWords=4 (256/64), postBitmap=18, nextFree=512
-    // preAccLen = 368 + 32 + 18 + 512 = 930, ceil(930/8)*8 = 936
-    // accountsOff = 648 + 936 = 1584
-    expect(layout!.accountsOff).toBe(1584);
+    // bitmapOff=1016, bitmapWords=4 (256/64), postBitmap=18, nextFree=512
+    // preAccLen = 1016 + 32 + 18 + 512 = 1578, ceil(1578/8)*8 = 1584
+    // accountsOff = 648 + 1584 = 2232
+    expect(layout!.accountsOff).toBe(2232);
   });
 
   it("detectLayout delegates to layout.accountsOff (no recompute regression)", () => {
     const r = detectLayout(84152);
     expect(r).not.toBeNull();
-    expect(r!.accountsOff).toBe(1584);
+    expect(r!.accountsOff).toBe(2232);
     expect(r!.maxAccounts).toBe(256);
   });
 
   it("parseAccount: account slot 0 — owner at relative offset 208", () => {
     const account = parseAccount(slabBuf, 0);
-    // We wrote 0xAB bytes into owner (absolute: 1584 + 208 = 1792..1824)
+    // We wrote 0xAB bytes into owner (absolute: 2232 + 208 = 2440..2472)
     const ownerBytes = account.owner.toBytes();
     expect(ownerBytes[0]).toBe(0xab);
     expect(ownerBytes[31]).toBe(0xab);
@@ -645,7 +661,9 @@ describe("encoding roundtrip — manual decode verifies no endianness or off-by-
     expect(readU64LE(data, 27)).toBe(30n);
   });
 
-  it("encodeDepositCollateral: userIdx + amount round-trip at various amounts", () => {
+  it("encodeDepositCollateral: amount round-trip at various amounts (v17: userIdx ignored, u128 wire)", () => {
+    // v17 BREAKING: userIdx no longer encoded. Wire is tag(1) + amount(u128 LE) = 17 bytes.
+    // amount lo 64 bits at [1..9], hi 64 bits at [9..17] = 0 for normal amounts.
     const cases: Array<[number, bigint]> = [
       [0, 0n],
       [1, 1n],
@@ -654,16 +672,19 @@ describe("encoding roundtrip — manual decode verifies no endianness or off-by-
     ];
     for (const [userIdx, amount] of cases) {
       const data = encodeDepositCollateral({ userIdx, amount: amount.toString() });
-      expect(readU16LE(data, 1)).toBe(userIdx);
-      expect(readU64LE(data, 3)).toBe(amount);
+      // amount as u128 LE: lo 8 bytes at offset 1
+      expect(readU64LE(data, 1)).toBe(amount);
+      expect(readU64LE(data, 9)).toBe(0n); // hi bits always 0 for these amounts
     }
   });
 
-  it("encodeWithdrawCollateral: userIdx + amount round-trip", () => {
+  it("encodeWithdrawCollateral: amount round-trip (v17: userIdx ignored, u128 wire)", () => {
+    // v17 BREAKING: wire is tag(1) + amount(u128 LE) = 17 bytes; userIdx not encoded.
     const data = encodeWithdrawCollateral({ userIdx: 42, amount: "123456789" });
     expect(data[0]).toBe(IX_TAG.WithdrawCollateral);
-    expect(readU16LE(data, 1)).toBe(42);
-    expect(readU64LE(data, 3)).toBe(123_456_789n);
+    // amount as u128 LE at [1..17]: lo 64 bits at [1..9]
+    expect(readU64LE(data, 1)).toBe(123_456_789n);
+    expect(readU64LE(data, 9)).toBe(0n); // hi bits = 0
   });
 
   it("encodeKeeperCrank: deprecated in v17 — throws for all callerIdx values", () => {
@@ -673,13 +694,13 @@ describe("encoding roundtrip — manual decode verifies no endianness or off-by-
     }
   });
 
-  it("encodeInitMarket: u128 tail fields survive bigint→bytes→bigint roundtrip", () => {
+  it("encodeInitMarket: u128 fields survive bigint→bytes→bigint roundtrip (v17: 219-byte payload)", () => {
     const MM_REQ = 12345678901234567890n;
     const IM_REQ = 340282366920938463463374607431768211455n; // u128 max
     const data = encodeInitMarket({
       admin: PublicKey.default,
       collateralMint: PublicKey.default,
-      indexFeedId: "a".repeat(64),
+      indexFeedId: "a".repeat(64),  // ignored in v17
       maxStalenessSecs: "0",
       confFilterBps: 0,
       invert: 0,
@@ -701,10 +722,12 @@ describe("encoding roundtrip — manual decode verifies no endianness or off-by-
       minNonzeroMmReq: MM_REQ.toString(),
       minNonzeroImReq: IM_REQ.toString(),
     });
-    // v12.19: 304-byte base + 66-byte mandatory ext tail = 370.
-    // minNonzeroMmReq(16) + minNonzeroImReq(16) at offsets 272, 288 (within base).
-    expect(data.length).toBe(370);
-    expect(readU128LE(data, 272)).toBe(MM_REQ);
-    expect(readU128LE(data, 288)).toBe(IM_REQ);
+    // v17: fixed 219-byte payload (INIT_MARKET_V17_LEN).
+    // v17 wire layout: tag(1) + maxPortfolioAssets(2) + hMin(8) + hMax(8) + initialPrice(8)
+    //   + minNonzeroMmReq(16) + minNonzeroImReq(16) + ...
+    // minNonzeroMmReq is at offset 1+2+8+8+8 = 27, minNonzeroImReq at offset 43.
+    expect(data.length).toBe(219);
+    expect(readU128LE(data, 27)).toBe(MM_REQ);
+    expect(readU128LE(data, 43)).toBe(IM_REQ);
   });
 });

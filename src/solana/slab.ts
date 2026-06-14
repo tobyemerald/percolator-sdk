@@ -1055,10 +1055,10 @@ for (const [, n] of [["Micro", 64], ["Small", 256], ["Medium", 1024], ["Large", 
  * V2 uses ENGINE_OFF=600, BITMAP_OFF=432, ACCOUNT_SIZE=248, postBitmap=18.
  * Sizes overlap with V1D (postBitmap=2) — disambiguation requires reading the version field.
  */
-export const SLAB_TIERS_V2 = {
+export const SLAB_TIERS_V2 = Object.freeze({
   small: { maxAccounts: 256,  dataSize: 65_088,    label: "Small",  description: "256 slots (V2 BPF intermediate)" },
   large: { maxAccounts: 4096, dataSize: 1_025_568, label: "Large",  description: "4,096 slots (V2 BPF intermediate)" },
-} as const;
+} as const);
 
 /**
  * V1M slab tier sizes — mainnet-deployed V1 program (ESa89R5).
@@ -1071,6 +1071,7 @@ for (const [label, n] of [["Micro", 64], ["Small", 256], ["Medium", 1024], ["Lar
   const size = computeSlabSize(V1M_ENGINE_OFF, V1M_ENGINE_BITMAP_OFF, V1M_ACCOUNT_SIZE, n, 18);
   SLAB_TIERS_V1M[label.toLowerCase()] = { maxAccounts: n, dataSize: size, label, description: `${n} slots (V1M mainnet)` };
 }
+Object.freeze(SLAB_TIERS_V1M);
 
 /**
  * V1M2 slab tier sizes — mainnet program rebuilt from main@4861c56 with 312-byte accounts.
@@ -1083,6 +1084,7 @@ for (const [label, n] of [["Micro", 64], ["Small", 256], ["Medium", 1024], ["Lar
   const size = computeSlabSize(V1M2_ENGINE_OFF, V1M2_ENGINE_BITMAP_OFF, V1M2_ACCOUNT_SIZE, n, 18);
   SLAB_TIERS_V1M2[label.toLowerCase()] = { maxAccounts: n, dataSize: size, label, description: `${n} slots (V1M2 mainnet upgraded)` };
 }
+Object.freeze(SLAB_TIERS_V1M2);
 
 /**
  * V_ADL slab tier sizes — PERC-8270/8271 ADL-upgraded program.
@@ -1095,6 +1097,7 @@ for (const [label, n] of [["Micro", 64], ["Small", 256], ["Medium", 1024], ["Lar
   const size = computeSlabSize(V_ADL_ENGINE_OFF, V_ADL_ENGINE_BITMAP_OFF, V_ADL_ACCOUNT_SIZE, n, 18);
   SLAB_TIERS_V_ADL[label.toLowerCase()] = { maxAccounts: n, dataSize: size, label, description: `${n} slots (V_ADL PERC-8270)` };
 }
+Object.freeze(SLAB_TIERS_V_ADL);
 
 /**
  * Build a complete SlabLayout descriptor for V0 or V1 (including V1-legacy) slabs.
@@ -1164,7 +1167,7 @@ function buildLayout(version: 0 | 1, maxAccounts: number, engineOffOverride?: nu
     engineLastBreakerSlotOff: isV0 ? -1 : V1_ENGINE_LAST_BREAKER_SLOT_OFF,
     engineBitmapOff: actualBitmapOff,
     postBitmap: 18,
-    acctOwnerOff: ACCT_OWNER_OFF,
+    acctOwnerOff: isV1Legacy ? V1_LEGACY_ACCT_OWNER_OFF : ACCT_OWNER_OFF,
 
     hasInsuranceIsolation: !isV0,
     engineInsuranceIsolatedOff: isV0 ? -1 : 48,
@@ -1539,6 +1542,7 @@ for (const [label, n] of [["Micro", 64], ["Small", 256], ["Medium", 1024], ["Lar
   const size = computeSlabSize(V_SETDEXPOOL_ENGINE_OFF, V_ADL_ENGINE_BITMAP_OFF, V_ADL_ACCOUNT_SIZE, n, 18);
   SLAB_TIERS_V_SETDEXPOOL[label.toLowerCase()] = { maxAccounts: n, dataSize: size, label, description: `${n} slots (V_SETDEXPOOL PERC-SetDexPool)` };
 }
+Object.freeze(SLAB_TIERS_V_SETDEXPOOL);
 
 /**
  * V12_1 slab tier sizes — percolator-core v12.1 merge.
@@ -1550,6 +1554,7 @@ for (const [label, n] of [["Micro", 64], ["Small", 256], ["Medium", 1024], ["Lar
   const size = computeSlabSize(V12_1_ENGINE_OFF, V12_1_ENGINE_BITMAP_OFF, V12_1_ACCOUNT_SIZE, n, 18);
   SLAB_TIERS_V12_1[label.toLowerCase()] = { maxAccounts: n, dataSize: size, label, description: `${n} slots (v12.1)` };
 }
+Object.freeze(SLAB_TIERS_V12_1);
 
 /**
  * V12_15 slab tier sizes — percolator v12.15 (engine+prog sync).
@@ -1562,6 +1567,7 @@ for (const [label, n] of [["Micro", 64], ["Small", 256], ["Medium", 1024], ["Med
   const size = computeSlabSize(V12_15_ENGINE_OFF, V12_15_ENGINE_BITMAP_OFF, V12_15_ACCOUNT_SIZE, n, 18);
   SLAB_TIERS_V12_15[label.toLowerCase()] = { maxAccounts: n, dataSize: size, label, description: `${n} slots (v12.15)` };
 }
+Object.freeze(SLAB_TIERS_V12_15);
 
 /**
  * V12_17 slab tier sizes — percolator v12.17 (two-bucket warmup, per-side funding).
@@ -1578,6 +1584,7 @@ for (const [label, n] of [["Small", 256], ["Medium", 1024], ["Large", 4096]] as 
   const size = V12_17_ENGINE_OFF_SBF + accountsOff + n * V12_17_ACCOUNT_SIZE_SBF + V12_17_RISK_BUF_LEN + n * V12_17_GEN_TABLE_ENTRY;
   SLAB_TIERS_V12_17[label.toLowerCase()] = { maxAccounts: n, dataSize: size, label, description: `${n} slots (v12.17)` };
 }
+Object.freeze(SLAB_TIERS_V12_17);
 
 /**
  * V12_19 slab tier sizes (probe-confirmed via cargo build-sbf compile-time
@@ -1590,12 +1597,12 @@ for (const [label, n] of [["Small", 256], ["Medium", 1024], ["Large", 4096]] as 
  * V12_19 layout block). Kept as Record for parity with other SLAB_TIERS_*
  * exports consumed by discovery.ts.
  */
-export const SLAB_TIERS_V12_19: Record<string, { maxAccounts: number; dataSize: number; label: string; description: string }> = {
+export const SLAB_TIERS_V12_19: Record<string, { maxAccounts: number; dataSize: number; label: string; description: string }> = Object.freeze({
   micro:  { maxAccounts: 64,    dataSize: 26_872,    label: "Micro",  description: "64 slots (v12.19, --features micro)" },
   small:  { maxAccounts: 256,   dataSize: 96_784,    label: "Small",  description: "256 slots (v12.19, --features small) — deployed mainnet ESa89R5..." },
   medium: { maxAccounts: 1024,  dataSize: 376_432,   label: "Medium", description: "1024 slots (v12.19, --features medium)" },
   large:  { maxAccounts: 4096,  dataSize: 1_495_024, label: "Large",  description: "4096 slots (v12.19, default features)" },
-};
+});
 
 /**
  * Build a SlabLayout for V_SETDEXPOOL slabs (PERC-SetDexPool security fix).
@@ -1673,7 +1680,7 @@ function buildLayoutV12_1(maxAccounts: number, dataLen?: number): SlabLayout {
   const hostSize = computeSlabSize(V12_1_ENGINE_OFF, V12_1_ENGINE_BITMAP_OFF, V12_1_ACCOUNT_SIZE, maxAccounts, 18);
   const isSbf = dataLen !== undefined && dataLen !== hostSize;
   const engineOff = isSbf ? V12_1_SBF_ENGINE_OFF : V12_1_ENGINE_OFF;
-  const bitmapOff = isSbf ? V12_1_SBF_BITMAP_OFF : (V12_1_ENGINE_BITMAP_OFF - V12_1_ENGINE_OFF);
+  const bitmapOff = isSbf ? V12_1_SBF_BITMAP_OFF : V12_1_ENGINE_BITMAP_OFF;
   const accountSize = isSbf ? V12_1_ACCOUNT_SIZE_SBF : V12_1_ACCOUNT_SIZE;
   const bitmapWords = Math.ceil(maxAccounts / 64);
   const bitmapBytes = bitmapWords * 8;
@@ -1987,6 +1994,31 @@ function buildLayoutV12_17(maxAccounts: number, dataLen: number): SlabLayout {
  * @param dataLen - The slab account data length in bytes
  * @param data    - Optional raw slab data for version-field disambiguation
  */
+/**
+ * Assert that a built SlabLayout is internally consistent.
+ * Throws if accountsOff > dataLen or if any required bitmap region extends past the data.
+ * Used by layout builders to catch offset arithmetic bugs early.
+ *
+ * @param layout - Layout descriptor to validate.
+ * @param dataLen - Actual byte length of the slab data buffer.
+ * @returns The validated layout (identity function for chaining).
+ */
+function validateLayout(layout: SlabLayout, dataLen: number): SlabLayout {
+  if (layout.accountsOff > dataLen) {
+    throw new Error(
+      `validateLayout: accountsOff (${layout.accountsOff}) exceeds data length (${dataLen}) ` +
+      `for engineOff=${layout.engineOff} accountSize=${layout.accountSize} maxAccounts=${layout.maxAccounts}`
+    );
+  }
+  const bitmapEnd = layout.engineOff + layout.engineBitmapOff + layout.bitmapWords * 8;
+  if (bitmapEnd > dataLen) {
+    throw new Error(
+      `validateLayout: bitmap region end (${bitmapEnd}) exceeds data length (${dataLen})`
+    );
+  }
+  return layout;
+}
+
 export function detectSlabLayout(dataLen: number, data?: Uint8Array): SlabLayout | null {
   // Check V12_19 sizes first. Mainnet program ESa89R5... was upgraded to
   // v12.19 (--features small) on 2026-04-28; any slab created post-upgrade
@@ -1994,17 +2026,17 @@ export function detectSlabLayout(dataLen: number, data?: Uint8Array): SlabLayout
   // deployed program only emits v12.19 going forward, so this priority
   // is correct for live mainnet reads.
   const v1219n = V12_19_SIZES.get(dataLen);
-  if (v1219n !== undefined) return buildLayoutV12_19(v1219n, dataLen);
+  if (v1219n !== undefined) return validateLayout(buildLayoutV12_19(v1219n, dataLen), dataLen);
 
   // Check V12_17 sizes (two-bucket warmup, per-side funding).
   // Unique account sizes (368 native / 352 SBF) + RISK_BUF — no collision with V12_15 (4400-byte accounts).
   const v1217n = V12_17_SIZES.get(dataLen);
-  if (v1217n !== undefined) return buildLayoutV12_17(v1217n, dataLen);
+  if (v1217n !== undefined) return validateLayout(buildLayoutV12_17(v1217n, dataLen), dataLen);
 
   // Check V12_15 sizes (v12.15 engine+prog sync, ACCOUNT_SIZE=4400).
   // Vastly larger account size — no collision with any earlier layout possible.
   const v1215n = V12_15_SIZES.get(dataLen);
-  if (v1215n !== undefined) return buildLayoutV12_15(v1215n, dataLen);
+  if (v1215n !== undefined) return validateLayout(buildLayoutV12_15(v1215n, dataLen), dataLen);
 
   // Check V12_1_EP sizes (entry_price re-added, ACCOUNT_SIZE=288 on SBF).
   // Must be checked before V12_1 (280-byte accounts) to avoid misdetection.
@@ -2188,10 +2220,6 @@ export interface MarketConfig {
   fundingInvScaleNotionalE6: bigint;
   fundingMaxPremiumBps: bigint;
   fundingMaxBpsPerSlot: bigint;
-  /** @deprecated Removed in V12_1 — always 0 */ fundingPremiumWeightBps: bigint;
-  /** @deprecated Removed in V12_1 — always 0 */ fundingSettlementIntervalSlots: bigint;
-  /** @deprecated Removed in V12_1 — always 0 */ fundingPremiumDampeningE6: bigint;
-  /** @deprecated Removed in V12_1 — always 0 */ fundingPremiumMaxBpsPerSlot: bigint;
   threshFloor: bigint;
   threshRiskBps: bigint;
   threshUpdateIntervalSlots: bigint;
@@ -2212,6 +2240,10 @@ export interface MarketConfig {
   adaptiveMaxFundingBps: bigint;
   marketCreatedSlot: bigint;
   oiRampSlots: bigint;
+  /**
+   * @stub Always 0n — not yet read from the on-chain MarketConfig struct.
+   * Do not use for market-resolution logic until a parser is wired.
+   */
   resolvedSlot: bigint;
   insuranceIsolationBps: number;
   /** PERC-622: Oracle phase (0=Nascent, 1=Growing, 2=Mature) */
@@ -2425,11 +2457,17 @@ export interface Account {
 
 export async function fetchSlab(
   connection: Connection,
-  slabPubkey: PublicKey
+  slabPubkey: PublicKey,
+  expectedOwner?: PublicKey
 ): Promise<Uint8Array> {
   const info = await connection.getAccountInfo(slabPubkey);
   if (!info) {
     throw new Error(`Slab account not found: ${slabPubkey.toBase58()}`);
+  }
+  if (expectedOwner && !info.owner.equals(expectedOwner)) {
+    throw new Error(
+      `fetchSlab: account ${slabPubkey.toBase58()} is owned by ${info.owner.toBase58()} but expected ${expectedOwner.toBase58()}`
+    );
   }
   return new Uint8Array(info.data);
 }
@@ -2623,10 +2661,6 @@ function parseConfigV12_17(data: Uint8Array, configOff: number): MarketConfig {
     fundingInvScaleNotionalE6: 0n,        // removed in v12.17
     fundingMaxPremiumBps,
     fundingMaxBpsPerSlot,
-    fundingPremiumWeightBps: 0n,
-    fundingSettlementIntervalSlots: 0n,
-    fundingPremiumDampeningE6: 0n,
-    fundingPremiumMaxBpsPerSlot: 0n,
     threshFloor: 0n,                      // removed in v12.17
     threshRiskBps: 0n,
     threshUpdateIntervalSlots: 0n,
@@ -2753,10 +2787,6 @@ function parseConfigV12_19(data: Uint8Array, configOff: number): MarketConfig {
     fundingInvScaleNotionalE6: 0n,
     fundingMaxPremiumBps,
     fundingMaxBpsPerSlot,
-    fundingPremiumWeightBps: 0n,
-    fundingSettlementIntervalSlots: 0n,
-    fundingPremiumDampeningE6: 0n,
-    fundingPremiumMaxBpsPerSlot: 0n,
     threshFloor: 0n,
     threshRiskBps: 0n,
     threshUpdateIntervalSlots: 0n,
@@ -2787,6 +2817,9 @@ function parseConfigV12_19(data: Uint8Array, configOff: number): MarketConfig {
 }
 
 export function parseConfig(data: Uint8Array, layoutHint?: SlabLayout | null): MarketConfig {
+  if (data.length >= 8 && readU64LE(data, 0) !== MAGIC) {
+    throw new Error('parseConfig: invalid slab magic');
+  }
   const layout = layoutHint !== undefined ? layoutHint : detectSlabLayout(data.length, data);
   const configOff = layout ? layout.configOffset : V0_HEADER_LEN;
   const configLen = layout ? layout.configLen : V0_CONFIG_LEN;
@@ -2987,10 +3020,6 @@ export function parseConfig(data: Uint8Array, layoutHint?: SlabLayout | null): M
     fundingInvScaleNotionalE6,
     fundingMaxPremiumBps,
     fundingMaxBpsPerSlot,
-    fundingPremiumWeightBps: 0n,
-    fundingSettlementIntervalSlots: 0n,
-    fundingPremiumDampeningE6: 0n,
-    fundingPremiumMaxBpsPerSlot: 0n,
     threshFloor,
     threshRiskBps,
     threshUpdateIntervalSlots,
@@ -3172,9 +3201,15 @@ export function parseParams(data: Uint8Array, layoutHint?: SlabLayout | null): R
  * Parse RiskEngine state (excluding accounts array). Layout-version aware.
  */
 export function parseEngine(data: Uint8Array): EngineState {
+  if (data.length >= 8 && readU64LE(data, 0) !== MAGIC) {
+    throw new Error('parseEngine: invalid slab magic');
+  }
   const layout = detectSlabLayout(data.length, data);
   if (!layout) {
     throw new Error(`Unrecognized slab data length: ${data.length}. Cannot determine layout version.`);
+  }
+  if (data.length < layout.accountsOff) {
+    throw new Error(`parseEngine: data too short for accountsOff (${data.length} < ${layout.accountsOff})`);
   }
 
   const base = layout.engineOff;
@@ -3310,7 +3345,10 @@ export function parseEngine(data: Uint8Array): EngineState {
     },
     currentSlot: readU64LE(data, base + layout.engineCurrentSlotOff),
     fundingIndexQpbE6: layout.engineFundingIndexOff >= 0
-      ? readI128LE(data, base + layout.engineFundingIndexOff) : 0n,
+      ? ((layout.engineLastFundingSlotOff >= 0 && layout.engineLastFundingSlotOff - layout.engineFundingIndexOff === 8)
+          ? BigInt(readI64LE(data, base + layout.engineFundingIndexOff))
+          : readI128LE(data, base + layout.engineFundingIndexOff))
+      : 0n,
     lastFundingSlot: layout.engineLastFundingSlotOff >= 0
       ? readU64LE(data, base + layout.engineLastFundingSlotOff) : 0n,
     fundingRateBpsPerSlotLast,
@@ -4035,6 +4073,371 @@ export function isV17Account(data: Uint8Array): boolean {
   const magic = readU64LE(data, 0);
   const version = readU16LE(data, 8);
   return magic === V17_MAGIC && version === V17_EXPECTED_VERSION;
+}
+
+// =============================================================================
+// V17 account decoders (DESYNC fixes — new standalone account types)
+// =============================================================================
+
+/** Header length for all v17 standalone accounts (magic:u64 + kind:u16 + reserved:6 = 16). */
+const V17_ACCOUNT_HEADER_LEN = 16;
+
+// PortfolioAccountV16Account field layout (relative to HEADER_LEN=16).
+// ProvenanceHeaderV16Account: market_group_id[32]+portfolio_account_id[32]+owner[32]+version[2]+layout_discriminator[2] = 100 bytes.
+const PF_PROVENANCE_OFF              = V17_ACCOUNT_HEADER_LEN;       // 16
+const PF_PROVENANCE_MARKET_GROUP_OFF = PF_PROVENANCE_OFF;            // 16..48
+const PF_PROVENANCE_ACCOUNT_ID_OFF   = PF_PROVENANCE_OFF + 32;       // 48..80
+const PF_PROVENANCE_OWNER_OFF        = PF_PROVENANCE_OFF + 64;       // 80..112
+const PF_PROVENANCE_VERSION_OFF      = PF_PROVENANCE_OFF + 96;       // 112..114
+const PF_PROVENANCE_DISC_OFF         = PF_PROVENANCE_OFF + 98;       // 114..116
+const PF_BODY_OFF                    = PF_PROVENANCE_OFF + 100;      // 116 — after provenance header
+const PF_OWNER_OFF                   = PF_BODY_OFF;                  // [u8;32]
+const PF_CAPITAL_OFF                 = PF_BODY_OFF + 32;             // V16PodU128
+const PF_PNL_OFF                     = PF_BODY_OFF + 48;             // V16PodI128
+const PF_RESERVED_PNL_OFF            = PF_BODY_OFF + 64;             // V16PodU128
+const PF_RESIDUAL_LOSS_OFF           = PF_BODY_OFF + 80;             // V16PodU128
+const PF_RESIDUAL_PRINCIPAL_OFF      = PF_BODY_OFF + 96;             // V16PodU128
+const PF_RESIDUAL_RECEIVED_OFF       = PF_BODY_OFF + 112;            // V16PodU128
+const PF_FEE_CREDITS_OFF             = PF_BODY_OFF + 128;            // V16PodI128
+const PF_CANCEL_ESCROW_OFF           = PF_BODY_OFF + 144;            // V16PodU128
+const PF_LAST_FEE_SLOT_OFF           = PF_BODY_OFF + 160;            // V16PodU64
+const PF_ACTIVE_BITMAP_OFF           = PF_BODY_OFF + 168;            // [V16PodU64; 1]
+// PortfolioLegV16Account (144 bytes each):
+//   active(1)+asset_index(4)+market_id(8)+side(1)+basis_pos_q(16)+a_basis(16)+k_snap(16)+
+//   f_snap(16)+epoch_snap(8)+loss_weight(16)+b_snap(16)+b_rem(16)+b_epoch_snap(8)+b_stale(1)+stale(1) = 144
+const PF_LEG_SIZE                    = 144;
+const PF_LEGS_OFF                    = PF_BODY_OFF + 176;            // [PortfolioLegV16Account; 16]
+const PF_LEGS_COUNT                  = 16;
+// PortfolioSourceDomainV16Account (196 bytes each):
+//   domain(4)+market_id(8)+13×u128(16 each)=208? Let me recount:
+//   domain(4)+source_claim_market_id(8)+source_claim_bound_num(16)+source_claim_liened_num(16)+
+//   source_claim_counterparty_liened_num(16)+source_claim_insurance_liened_num(16)+
+//   source_lien_effective_reserved(16)+source_lien_counterparty_backing_num(16)+
+//   source_lien_insurance_backing_num(16)+source_lien_fee_last_slot(8)+
+//   source_claim_impaired_num(16)+source_lien_impaired_effective_reserved(16)+
+//   source_lien_capital_at_risk_fee_revenue(16)+source_lien_impaired_capital_at_risk_fee_revenue(16)
+//   = 4+8+16+16+16+16+16+16+16+8+16+16+16+16 = 196 bytes
+const PF_SOURCE_DOMAIN_SIZE          = 196;
+const PF_SOURCE_DOMAINS_OFF          = PF_LEGS_OFF + PF_LEGS_COUNT * PF_LEG_SIZE; // 176+2304=2480 (rel to header)
+const PF_SOURCE_DOMAINS_CAP          = 32; // PORTFOLIO_SOURCE_DOMAIN_CAP = 2 * V16_MAX_PORTFOLIO_ASSETS_N = 32
+// HealthCertV16Account (121 bytes):
+const PF_HEALTH_CERT_OFF             = PF_SOURCE_DOMAINS_OFF + PF_SOURCE_DOMAINS_CAP * PF_SOURCE_DOMAIN_SIZE;
+// stale_state(1)+b_stale_state(1)+rebalance_lock(1)+liquidation_lock(1) = 4 bytes after HealthCert
+// CloseProgressLedgerV16Account (188 bytes):
+//   active(1)+finalized(1)+canceled(1)+close_id(8)+asset_index(4)+market_id(8)+domain_side(1)+
+//   gross_loss(16)+drift_ref_slot(8)+max_close_slot(8)+support(16)+junior(16)+insurance(16)+
+//   b_loss(16)+explicit(16)+adl(16)+drift_consumed(16)+residual_remaining(16) = 188
+// ResolvedPayoutReceiptV16Account (66 bytes):
+//   prior_bound(16)+live_released(16)+terminal(16)+paid(16)+present(1)+finalized(1) = 66
+
+/** Per-leg decoded data returned by parsePortfolioV17. */
+export interface PortfolioLegV17 {
+  active: boolean;
+  assetIndex: number;
+  marketId: bigint;
+  /** 0 = long, 1 = short */
+  side: number;
+  basisPosQ: bigint;
+  aBasis: bigint;
+  kSnap: bigint;
+  fSnap: bigint;
+  epochSnap: bigint;
+  lossWeight: bigint;
+  bSnap: bigint;
+  bRem: bigint;
+  bEpochSnap: bigint;
+  bStale: boolean;
+  stale: boolean;
+}
+
+/** Per source-domain slot returned by parsePortfolioV17. */
+export interface PortfolioSourceDomainV17 {
+  domain: number;
+  sourceClaimMarketId: bigint;
+  sourceClaimBoundNum: bigint;
+  sourceClaimLienedNum: bigint;
+  sourceClaimCounterpartyLienedNum: bigint;
+  sourceClaimInsuranceLienedNum: bigint;
+  sourceLienEffectiveReserved: bigint;
+  sourceLienCounterpartyBackingNum: bigint;
+  sourceLienInsuranceBackingNum: bigint;
+  sourceLienFeeLastSlot: bigint;
+  sourceClaimImpairedNum: bigint;
+  sourceLienImpairedEffectiveReserved: bigint;
+  sourceLienCapitalAtRiskFeeRevenue: bigint;
+  sourceLienImpairedCapitalAtRiskFeeRevenue: bigint;
+}
+
+/** Decoded v17 PortfolioAccountV16Account. */
+export interface PortfolioV17 {
+  /** Market group this portfolio belongs to. */
+  marketGroupId: PublicKey;
+  /** Portfolio account identity pubkey (immutable PDA). */
+  portfolioAccountId: PublicKey;
+  /** Owner wallet pubkey from the provenance header. */
+  provenanceOwner: PublicKey;
+  /** Portfolio owner (matches provenanceOwner for valid accounts). */
+  owner: PublicKey;
+  /** Collateral capital in atoms (u128). */
+  capital: bigint;
+  /** Unrealised P&L in atoms (i128). */
+  pnl: bigint;
+  /** Capital reserved for pending payout (u128). */
+  reservedPnl: bigint;
+  /** Genesis farming: cumulative crystallized loss atoms (u128). */
+  residualCrystallizedLossAtomsTotal: bigint;
+  /** Genesis farming: cumulative spent principal atoms (u128). */
+  residualSpentPrincipalAtomsTotal: bigint;
+  /** Genesis farming: cumulative received atoms (u128). */
+  residualReceivedAtomsTotal: bigint;
+  /** Fee credits (i128, can be negative). */
+  feeCredits: bigint;
+  /** Cancel-deposit escrow holding (u128). */
+  cancelDepositEscrow: bigint;
+  /** Slot when fees were last accrued. */
+  lastFeeSlot: bigint;
+  /** Bitmap of active leg slots (one u64 word for 16-asset portfolios). */
+  activeBitmap: bigint;
+  /** All 16 position leg slots (active or empty). */
+  legs: PortfolioLegV17[];
+  /** Up to 32 source-domain entries (sparse; unoccupied slots have domain=0 and all-zero fields). */
+  sourceDomains: PortfolioSourceDomainV17[];
+}
+
+/**
+ * Parse a v17 PortfolioAccountV16Account from raw account data.
+ * Total account size: HEADER_LEN(16) + sizeof(PortfolioAccountV16Account).
+ *
+ * @param data - Raw account bytes from `connection.getAccountInfo`.
+ * @returns Decoded portfolio state.
+ * @throws If data is too short or magic does not match.
+ *
+ * @example
+ * ```typescript
+ * const info = await connection.getAccountInfo(portfolioPubkey);
+ * const portfolio = parsePortfolioV17(new Uint8Array(info!.data));
+ * console.log('capital:', portfolio.capital);
+ * ```
+ */
+export function parsePortfolioV17(data: Uint8Array): PortfolioV17 {
+  // Minimum size check: header(16) + provenance(100) + owner(32) + capital(16) = 164
+  const MIN_PORTFOLIO_BYTES = PF_BODY_OFF + 16; // at minimum through capital
+  if (data.length < MIN_PORTFOLIO_BYTES) {
+    throw new Error(`parsePortfolioV17: data too short (${data.length} < ${MIN_PORTFOLIO_BYTES})`);
+  }
+
+  // Provenance header
+  const marketGroupId = new PublicKey(data.subarray(PF_PROVENANCE_MARKET_GROUP_OFF, PF_PROVENANCE_MARKET_GROUP_OFF + 32));
+  const portfolioAccountId = new PublicKey(data.subarray(PF_PROVENANCE_ACCOUNT_ID_OFF, PF_PROVENANCE_ACCOUNT_ID_OFF + 32));
+  const provenanceOwner = new PublicKey(data.subarray(PF_PROVENANCE_OWNER_OFF, PF_PROVENANCE_OWNER_OFF + 32));
+
+  // Body fields
+  const owner = new PublicKey(data.subarray(PF_OWNER_OFF, PF_OWNER_OFF + 32));
+  const capital = readU128LE(data, PF_CAPITAL_OFF);
+  const pnl = readI128LE(data, PF_PNL_OFF);
+  const reservedPnl = readU128LE(data, PF_RESERVED_PNL_OFF);
+
+  const residualCrystallizedLossAtomsTotal = data.length >= PF_RESIDUAL_LOSS_OFF + 16
+    ? readU128LE(data, PF_RESIDUAL_LOSS_OFF) : 0n;
+  const residualSpentPrincipalAtomsTotal = data.length >= PF_RESIDUAL_PRINCIPAL_OFF + 16
+    ? readU128LE(data, PF_RESIDUAL_PRINCIPAL_OFF) : 0n;
+  const residualReceivedAtomsTotal = data.length >= PF_RESIDUAL_RECEIVED_OFF + 16
+    ? readU128LE(data, PF_RESIDUAL_RECEIVED_OFF) : 0n;
+  const feeCredits = data.length >= PF_FEE_CREDITS_OFF + 16
+    ? readI128LE(data, PF_FEE_CREDITS_OFF) : 0n;
+  const cancelDepositEscrow = data.length >= PF_CANCEL_ESCROW_OFF + 16
+    ? readU128LE(data, PF_CANCEL_ESCROW_OFF) : 0n;
+  const lastFeeSlot = data.length >= PF_LAST_FEE_SLOT_OFF + 8
+    ? readU64LE(data, PF_LAST_FEE_SLOT_OFF) : 0n;
+  const activeBitmap = data.length >= PF_ACTIVE_BITMAP_OFF + 8
+    ? readU64LE(data, PF_ACTIVE_BITMAP_OFF) : 0n;
+
+  // Legs
+  const legs: PortfolioLegV17[] = [];
+  for (let i = 0; i < PF_LEGS_COUNT; i++) {
+    const b = PF_LEGS_OFF + i * PF_LEG_SIZE;
+    if (data.length < b + PF_LEG_SIZE) break;
+    legs.push({
+      active: data[b] !== 0,
+      assetIndex: readU32LE(data, b + 1),
+      marketId: readU64LE(data, b + 5),
+      side: data[b + 13],
+      basisPosQ: readI128LE(data, b + 14),
+      aBasis: readU128LE(data, b + 30),
+      kSnap: readI128LE(data, b + 46),
+      fSnap: readI128LE(data, b + 62),
+      epochSnap: readU64LE(data, b + 78),
+      lossWeight: readU128LE(data, b + 86),
+      bSnap: readU128LE(data, b + 102),
+      bRem: readU128LE(data, b + 118),
+      bEpochSnap: readU64LE(data, b + 134),
+      bStale: data[b + 142] !== 0,
+      stale: data[b + 143] !== 0,
+    });
+  }
+
+  // Source domains
+  const sourceDomains: PortfolioSourceDomainV17[] = [];
+  for (let i = 0; i < PF_SOURCE_DOMAINS_CAP; i++) {
+    const b = PF_SOURCE_DOMAINS_OFF + i * PF_SOURCE_DOMAIN_SIZE;
+    if (data.length < b + PF_SOURCE_DOMAIN_SIZE) break;
+    sourceDomains.push({
+      domain: readU32LE(data, b + 0),
+      sourceClaimMarketId: readU64LE(data, b + 4),
+      sourceClaimBoundNum: readU128LE(data, b + 12),
+      sourceClaimLienedNum: readU128LE(data, b + 28),
+      sourceClaimCounterpartyLienedNum: readU128LE(data, b + 44),
+      sourceClaimInsuranceLienedNum: readU128LE(data, b + 60),
+      sourceLienEffectiveReserved: readU128LE(data, b + 76),
+      sourceLienCounterpartyBackingNum: readU128LE(data, b + 92),
+      sourceLienInsuranceBackingNum: readU128LE(data, b + 108),
+      sourceLienFeeLastSlot: readU64LE(data, b + 124),
+      sourceClaimImpairedNum: readU128LE(data, b + 132),
+      sourceLienImpairedEffectiveReserved: readU128LE(data, b + 148),
+      sourceLienCapitalAtRiskFeeRevenue: readU128LE(data, b + 164),
+      sourceLienImpairedCapitalAtRiskFeeRevenue: readU128LE(data, b + 180),
+    });
+  }
+
+  return {
+    marketGroupId,
+    portfolioAccountId,
+    provenanceOwner,
+    owner,
+    capital,
+    pnl,
+    reservedPnl,
+    residualCrystallizedLossAtomsTotal,
+    residualSpentPrincipalAtomsTotal,
+    residualReceivedAtomsTotal,
+    feeCredits,
+    cancelDepositEscrow,
+    lastFeeSlot,
+    activeBitmap,
+    legs,
+    sourceDomains,
+  };
+}
+
+// =============================================================================
+// LpVaultRegistryV16 decoder
+// =============================================================================
+// Account layout: HEADER_LEN(16) + LpVaultRegistryV16(160) = 176 bytes total.
+// Struct layout (probe-confirmed in ~/v17/percolator-prog/src/v16_program.rs:2927):
+//   market_group[32]+lp_mint[32]+total_lp_shares_outstanding(u128)+insurance_fee_snapshot(u128)+
+//   fee_distribution_total(u128)+epoch(u64)+redemption_cooldown_slots(u64)+fee_share_bps(u16)+
+//   oi_reservation_threshold_bps(u16)+domain(u16)+paused(u8)+version(u8)+bump(u8)+mint_bump(u8)+
+//   _padding[6]+_reserved[16] = 160 bytes.
+const LP_VAULT_REGISTRY_TOTAL = 176; // HEADER_LEN(16) + sizeof(LpVaultRegistryV16)(160)
+
+/** Decoded v17 LpVaultRegistryV16 account. */
+export interface LpVaultRegistryV17 {
+  marketGroup: PublicKey;
+  lpMint: PublicKey;
+  totalLpSharesOutstanding: bigint;
+  insuranceFeeSnapshotAtoms: bigint;
+  feeDistributionTotalAtoms: bigint;
+  epoch: bigint;
+  redemptionCooldownSlots: bigint;
+  feeShareBps: number;
+  oiReservationThresholdBps: number;
+  domain: number;
+  paused: boolean;
+  version: number;
+  bump: number;
+  mintBump: number;
+}
+
+/**
+ * Parse a v17 LpVaultRegistryV16 account from raw bytes.
+ * Total account size: 176 bytes (HEADER_LEN=16 + struct=160).
+ *
+ * @param data - Raw account bytes.
+ * @returns Decoded LP vault registry state.
+ * @throws If data is shorter than 176 bytes.
+ *
+ * @example
+ * ```typescript
+ * const info = await connection.getAccountInfo(registryPubkey);
+ * const registry = parseLpVaultRegistry(new Uint8Array(info!.data));
+ * console.log('totalShares:', registry.totalLpSharesOutstanding);
+ * ```
+ */
+export function parseLpVaultRegistry(data: Uint8Array): LpVaultRegistryV17 {
+  if (data.length < LP_VAULT_REGISTRY_TOTAL) {
+    throw new Error(
+      `parseLpVaultRegistry: data too short (${data.length} < ${LP_VAULT_REGISTRY_TOTAL})`
+    );
+  }
+  const b = V17_ACCOUNT_HEADER_LEN; // skip 16-byte header
+  return {
+    marketGroup: new PublicKey(data.subarray(b + 0, b + 32)),
+    lpMint: new PublicKey(data.subarray(b + 32, b + 64)),
+    totalLpSharesOutstanding: readU128LE(data, b + 64),
+    insuranceFeeSnapshotAtoms: readU128LE(data, b + 80),
+    feeDistributionTotalAtoms: readU128LE(data, b + 96),
+    epoch: readU64LE(data, b + 112),
+    redemptionCooldownSlots: readU64LE(data, b + 120),
+    feeShareBps: readU16LE(data, b + 128),
+    oiReservationThresholdBps: readU16LE(data, b + 130),
+    domain: readU16LE(data, b + 132),
+    paused: data[b + 134] !== 0,
+    version: data[b + 135],
+    bump: data[b + 136],
+    mintBump: data[b + 137],
+  };
+}
+
+// =============================================================================
+// LpRedemptionV16 decoder
+// =============================================================================
+// Account layout: HEADER_LEN(16) + LpRedemptionV16(96) = 112 bytes total.
+// Struct layout (probe-confirmed in ~/v17/percolator-prog/src/v16_program.rs:3023):
+//   registry[32]+redeemer[32]+shares(u128)+request_slot(u64)+version(u8)+bump(u8)+_padding[6] = 96.
+const LP_REDEMPTION_TOTAL = 112; // HEADER_LEN(16) + sizeof(LpRedemptionV16)(96)
+
+/** Decoded v17 LpRedemptionV16 account. */
+export interface LpRedemptionV17 {
+  registry: PublicKey;
+  redeemer: PublicKey;
+  /** LP shares requested for redemption (u128). */
+  shares: bigint;
+  /** Slot when RequestRedeemLpShares was called. */
+  requestSlot: bigint;
+  version: number;
+  bump: number;
+}
+
+/**
+ * Parse a v17 LpRedemptionV16 account from raw bytes.
+ * Total account size: 112 bytes (HEADER_LEN=16 + struct=96).
+ *
+ * @param data - Raw account bytes.
+ * @returns Decoded LP redemption request state.
+ * @throws If data is shorter than 112 bytes.
+ *
+ * @example
+ * ```typescript
+ * const info = await connection.getAccountInfo(redemptionPubkey);
+ * const redemption = parseLpRedemption(new Uint8Array(info!.data));
+ * console.log('shares:', redemption.shares, 'slot:', redemption.requestSlot);
+ * ```
+ */
+export function parseLpRedemption(data: Uint8Array): LpRedemptionV17 {
+  if (data.length < LP_REDEMPTION_TOTAL) {
+    throw new Error(
+      `parseLpRedemption: data too short (${data.length} < ${LP_REDEMPTION_TOTAL})`
+    );
+  }
+  const b = V17_ACCOUNT_HEADER_LEN; // skip 16-byte header
+  return {
+    registry: new PublicKey(data.subarray(b + 0, b + 32)),
+    redeemer: new PublicKey(data.subarray(b + 32, b + 64)),
+    shares: readU128LE(data, b + 64),
+    requestSlot: readU64LE(data, b + 80),
+    version: data[b + 88],
+    bump: data[b + 89],
+  };
 }
 
 /**

@@ -13,7 +13,7 @@
  *   - Errors 42-46 are NFT/B-3 (new in v17).
  *   - v12.x errors 28-65 are entirely removed.
  */
-interface ErrorInfo {
+export interface ErrorInfo {
     name: string;
     hint: string;
 }
@@ -59,4 +59,3 @@ export declare function parseErrorFromLogs(logs: string[]): {
     name: string;
     hint?: string;
 } | null;
-export {};

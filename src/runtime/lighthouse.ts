@@ -159,29 +159,24 @@ export function isLighthouseError(error: unknown): boolean {
 export function isLighthouseFailureInLogs(logs: string[]): boolean {
   if (!Array.isArray(logs)) return false;
 
-  let insideLighthouse = false;
+  let lighthouseDepth = 0;
 
   for (const line of logs) {
     if (typeof line !== "string") continue;
 
-    // Track program invocation depth
+    // Track Lighthouse program invocation depth
     if (line.includes(`Program ${LIGHTHOUSE_PROGRAM_ID_STR} invoke`)) {
-      insideLighthouse = true;
+      lighthouseDepth++;
       continue;
     }
 
-    // Lighthouse program returned success — reset
+    // Lighthouse program returned success — decrement depth
     if (line.includes(`Program ${LIGHTHOUSE_PROGRAM_ID_STR} success`)) {
-      insideLighthouse = false;
+      if (lighthouseDepth > 0) lighthouseDepth--;
       continue;
     }
 
-    // Error while inside a Lighthouse invocation
-    if (insideLighthouse && /failed/i.test(line)) {
-      return true;
-    }
-
-    // Explicit Lighthouse failure log
+    // Only report failure when the Lighthouse program itself explicitly fails
     if (line.includes(`Program ${LIGHTHOUSE_PROGRAM_ID_STR} failed`)) {
       return true;
     }

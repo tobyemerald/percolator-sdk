@@ -373,19 +373,23 @@ function parseEngineLight(
     };
   }
 
-  // V_ADL engine struct (PERC-8270/8271): ENGINE_OFF=624, layout-driven offsets.
-  // Must branch here because V_ADL has version===1 same as V1/V1M — differentiate by engineOff.
-  // All offsets from SlabLayout descriptor, which is computed by buildLayoutVADL().
-  const isVAdl = layout !== null && layout.engineOff === 624 && layout.accountSize === 312;
-  if (isVAdl) {
-    const l = layout!;
+  // Layout-driven engine parse: covers V_ADL (engineOff=624, accountSize=312), V12_1, V12_15,
+  // V12_17, V12_19, V1M, V1M2, V_SETDEXPOOL and any future layout registered in slab.ts.
+  // PR #185 / PR #151: replaced the narrow isVAdl gate (engineOff===624 && accountSize===312)
+  // with a general layout !== null check so ALL layout variants use the descriptor-driven path.
+  // The old hardcoded V1 fallback block (fixed offsets) is removed — it misread V12_1x slabs
+  // that share engineOff=640 but have different internal struct sizes.
+  if (layout !== null) {
+    const l = layout;
+    // hasInsuranceIsolation: v17+ layouts expose isolatedBalance/isolationBps; older ones set -1.
+    const hasInsuranceIsolation = l.engineInsuranceIsolatedOff >= 0 && l.engineInsuranceIsolationBpsOff >= 0;
     return {
       vault: readU128LE(data, base + 0),
       insuranceFund: {
         balance: readU128LE(data, base + l.engineInsuranceOff),
         feeRevenue: readU128LE(data, base + l.engineInsuranceOff + 16),
-        isolatedBalance: readU128LE(data, base + l.engineInsuranceIsolatedOff),
-        isolationBps: readU16LE(data, base + l.engineInsuranceIsolationBpsOff),
+        isolatedBalance: hasInsuranceIsolation ? readU128LE(data, base + l.engineInsuranceIsolatedOff) : 0n,
+        isolationBps: hasInsuranceIsolation ? readU16LE(data, base + l.engineInsuranceIsolationBpsOff) : 0,
       },
       currentSlot: readU64LE(data, base + l.engineCurrentSlotOff),
       fundingIndexQpbE6: readI128LE(data, base + l.engineFundingIndexOff),
@@ -418,66 +422,21 @@ function parseEngineLight(
       lastBreakerSlot: l.engineLastBreakerSlotOff >= 0 ? readU64LE(data, base + l.engineLastBreakerSlotOff) : 0n,
       markPriceE6: l.engineMarkPriceOff >= 0 ? readU64LE(data, base + l.engineMarkPriceOff) : 0n,
       oraclePriceE6: 0n,
-      fLongNum: 0n, fShortNum: 0n, negPnlAccountCount: 0n, fundPxLast: 0n,
-      resolvedKLongTerminalDelta: 0n, resolvedKShortTerminalDelta: 0n, resolvedLivePrice: 0n,
+      fLongNum: 0n,
+      fShortNum: 0n,
+      negPnlAccountCount: 0n,
+      fundPxLast: 0n,
+      resolvedKLongTerminalDelta: 0n,
+      resolvedKShortTerminalDelta: 0n,
+      resolvedLivePrice: 0n,
       numUsedAccounts: canReadNumUsed ? readU16LE(data, base + numUsedOff) : 0,
       nextAccountId: canReadNextId ? readU64LE(data, base + nextAccountIdOff) : 0n,
     };
   }
 
-  // V1 engine struct (PERC-1094 corrected): ENGINE_OFF=600 (BPF/SBF, CONFIG_LEN=496)
-  // vault(0,16) + insurance(16,56) + params(72,288) + currentSlot(360) + fundingIndex(368,16)
-  // + lastFundingSlot(384) + fundingRateBps(392) + markPrice(400) + lastCrankSlot(424)
-  // + maxCrankStaleness(432) + totalOI(440,16) + longOi(456,16) + shortOi(472,16)
-  // + cTot(488,16) + pnlPosTot(504,16) + liqCursor(520,2) + gcCursor(522,2)
-  // + lastSweepStart(528) + lastSweepComplete(536) + crankCursor(544,2) + sweepStartIdx(546,2)
-  // + lifetimeLiquidations(552) + lifetimeForceCloses(560)
-  // + netLpPos(568,16) + lpSumAbs(584,16) + lpMaxAbs(600,16) + lpMaxAbsSweep(616,16)
-  // + emergencyOiMode(632,1+7pad) + emergencyStartSlot(640) + lastBreakerSlot(648) + bitmap(656)
-  return {
-    vault: readU128LE(data, base + 0),
-    insuranceFund: {
-      balance: readU128LE(data, base + 16),
-      feeRevenue: readU128LE(data, base + 32),
-      isolatedBalance: readU128LE(data, base + 48),
-      isolationBps: readU16LE(data, base + 64),
-    },
-    currentSlot: readU64LE(data, base + 360),     // PERC-1094: params end at 72+288=360 (was 352)
-    fundingIndexQpbE6: readI128LE(data, base + 368),
-    lastFundingSlot: readU64LE(data, base + 384),
-    fundingRateBpsPerSlotLast: readI64LE(data, base + 392),
-    fundingRateE9: 0n,
-    marketMode: null,
-    lastCrankSlot: readU64LE(data, base + 424),
-    maxCrankStalenessSlots: readU64LE(data, base + 408),
-    totalOpenInterest: readU128LE(data, base + 416),
-    longOi: readU128LE(data, base + 432),
-    shortOi: readU128LE(data, base + 448),
-    cTot: readU128LE(data, base + 464),
-    pnlPosTot: readU128LE(data, base + 480),
-    pnlMaturedPosTot: 0n,
-    liqCursor: readU16LE(data, base + 496),
-    gcCursor: readU16LE(data, base + 498),
-    lastSweepStartSlot: readU64LE(data, base + 504),
-    lastSweepCompleteSlot: readU64LE(data, base + 512),
-    crankCursor: readU16LE(data, base + 520),
-    sweepStartIdx: readU16LE(data, base + 522),
-    lifetimeLiquidations: readU64LE(data, base + 528),
-    lifetimeForceCloses: readU64LE(data, base + 536),
-    netLpPos: readI128LE(data, base + 544),
-    lpSumAbs: readU128LE(data, base + 560),
-    lpMaxAbs: readU128LE(data, base + 576),
-    lpMaxAbsSweep: readU128LE(data, base + 592),
-    emergencyOiMode: data[base + 608] !== 0,
-    emergencyStartSlot: readU64LE(data, base + 616),
-    lastBreakerSlot: readU64LE(data, base + 624),
-    markPriceE6: readU64LE(data, base + 400),      // PERC-1094: was 392
-    oraclePriceE6: 0n,
-    fLongNum: 0n, fShortNum: 0n, negPnlAccountCount: 0n, fundPxLast: 0n,
-    resolvedKLongTerminalDelta: 0n, resolvedKShortTerminalDelta: 0n, resolvedLivePrice: 0n,
-    numUsedAccounts: canReadNumUsed ? readU16LE(data, base + numUsedOff) : 0,
-    nextAccountId: canReadNextId ? readU64LE(data, base + nextAccountIdOff) : 0n,
-  };
+  // layout === null: unrecognized slab format — callers should have skipped via the
+  // layout !== null guard in discoverMarkets before calling parseEngineLight.
+  throw new Error(`parseEngineLight: unrecognized slab layout (isV0=${isV0}, isV2=${isV2})`);
 }
 
 /** Options for `discoverMarkets`. */
@@ -582,9 +541,10 @@ function isRateLimitError(err: unknown): boolean {
   );
 }
 
-/** Add up to 25% random jitter to avoid thundering-herd on retry. */
+/** Add equal-distribution jitter (range: [delayMs/2, delayMs]) to avoid thundering-herd on retry. */
 function withJitter(delayMs: number): number {
-  return delayMs + Math.floor(Math.random() * delayMs * 0.25);
+  const half = Math.floor(delayMs / 2);
+  return half + Math.floor(Math.random() * (delayMs - half + 1));
 }
 
 /**
@@ -617,7 +577,12 @@ export async function discoverMarkets(
   // 2026-05-01 to ESa89R5...) produce 96784-byte (small) accounts that none of the older tiers
   // match. Without this entry, discoverMarkets on the upgraded program returns 0 markets via the
   // dataSize-filter path and falls through to memcmp with wrong layout hints.
-  const ALL_TIERS = [
+  //
+  // PR #199: Build ALL_TIERS via a Map keyed on dataSize to eliminate duplicate tier entries.
+  // SLAB_TIERS and SLAB_TIERS_V12_17 are intentionally identical (both emit small/medium/large
+  // v12.17 entries), producing duplicate dataSize values that caused redundant RPC calls.
+  // Tie-break: keep the entry with higher maxAccounts (more capable parse context).
+  const ALL_TIERS_RAW = [
     ...Object.values(SLAB_TIERS),           // v12.17 (default)
     ...Object.values(SLAB_TIERS_V12_19),    // v12.19 (deployed mainnet)
     ...Object.values(SLAB_TIERS_V12_17),    // v12.17 (explicit)
@@ -632,6 +597,14 @@ export async function discoverMarkets(
     ...Object.values(SLAB_TIERS_V_ADL),
     ...Object.values(SLAB_TIERS_V_SETDEXPOOL),
   ];
+  const tierBySize = new Map<number, { dataSize: number; maxAccounts: number }>();
+  for (const tier of ALL_TIERS_RAW) {
+    const existing = tierBySize.get(tier.dataSize);
+    if (!existing || tier.maxAccounts > existing.maxAccounts) {
+      tierBySize.set(tier.dataSize, tier);
+    }
+  }
+  const ALL_TIERS = [...tierBySize.values()];
   type RawEntry = { pubkey: PublicKey; account: { data: Buffer | Uint8Array }; maxAccounts: number; dataSize: number };
   let rawAccounts: RawEntry[] = [];
 
@@ -724,6 +697,8 @@ export async function discoverMarkets(
     // account size changed; RPC returns no error, so we must fallback on empty results too.
     if (rawAccounts.length === 0) {
       console.warn("[discoverMarkets] dataSize filters returned 0 markets, falling back to memcmp");
+      // PR #183 / PR #166: fetch full account data (no dataSlice) so detectSlabLayout can
+      // identify the actual tier from account.data.length instead of hardcoding large/4096.
       const fallback = await connection.getProgramAccounts(programId, {
         filters: [
           {
@@ -733,10 +708,12 @@ export async function discoverMarkets(
             },
           },
         ],
-        dataSlice: { offset: 0, length: HEADER_SLICE_LENGTH },
       });
-      // Unknown actual size — use large V0 as safe default (maxAccounts=4096)
-      rawAccounts = [...fallback].map(e => ({ ...e, maxAccounts: 4096, dataSize: SLAB_TIERS.large.dataSize })) as RawEntry[];
+      rawAccounts = [...fallback].map(e => {
+        const len = e.account.data.length;
+        const lay = detectSlabLayout(len, new Uint8Array(e.account.data));
+        return { ...e, maxAccounts: lay?.maxAccounts ?? 4096, dataSize: len };
+      }) as RawEntry[];
     }
   } catch (err) {
     console.warn(
@@ -744,6 +721,7 @@ export async function discoverMarkets(
       err instanceof Error ? err.message : err,
     );
     try {
+      // PR #183 / PR #166: same full-data fetch as the empty-result fallback above.
       const fallback = await connection.getProgramAccounts(programId, {
         filters: [
           {
@@ -753,9 +731,12 @@ export async function discoverMarkets(
             },
           },
         ],
-        dataSlice: { offset: 0, length: HEADER_SLICE_LENGTH },
       });
-      rawAccounts = [...fallback].map(e => ({ ...e, maxAccounts: 4096, dataSize: SLAB_TIERS.large.dataSize })) as RawEntry[];
+      rawAccounts = [...fallback].map(e => {
+        const len = e.account.data.length;
+        const lay = detectSlabLayout(len, new Uint8Array(e.account.data));
+        return { ...e, maxAccounts: lay?.maxAccounts ?? 4096, dataSize: len };
+      }) as RawEntry[];
     } catch (memcmpErr) {
       // GH#59: memcmp also rejected (public mainnet RPCs reject all getProgramAccounts)
       console.warn(

@@ -25,13 +25,16 @@ export function safeEnv(key: string): string | undefined {
 export const PROGRAM_IDS = {
   devnet: {
     percolator: "FxfD37s1AZTeWfFQps9Zpebi2dNQ9QSSDtfMKdbsfKrD",
-    matcher: "GTRgyTDfrMvBubALAqtHuQwT8tbGyXid7svXZKtWfC9k",
+    matcher: "4HcGCsyjAqnFua5ccuXyt8KRRQzKFbGTJkVChpS7Yfzy",
   },
   mainnet: {
     percolator: "ESa89R5Es3rJ5mnwGybVRG1GrNt9etP11Z5V2QWD4edv",
     matcher: "GDK8wx38kpiSVSfGTVNiSdptX3Z5R4kQyqh6Q3QX6wmi",
   },
 } as const;
+Object.freeze(PROGRAM_IDS.devnet);
+Object.freeze(PROGRAM_IDS.mainnet);
+Object.freeze(PROGRAM_IDS);
 
 /**
  * v17 program IDs — placeholder until the v17 converged program is deployed.
@@ -47,6 +50,7 @@ export const PROGRAM_IDS_V17 = {
   /** v17 stake placeholder. */
   stake: "Per5taTe111111111111111111111111111111111111",
 } as const;
+Object.freeze(PROGRAM_IDS_V17);
 
 /** The v17 wrapper placeholder PublicKey. Use only before mainnet cutover. */
 export const PROGRAM_ID_V17 = new PublicKey(PROGRAM_IDS_V17.percolator);

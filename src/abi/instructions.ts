@@ -2,9 +2,7 @@ import { PublicKey } from "@solana/web3.js";
 import {
   encU8,
   encU16,
-  encU32,
   encU64,
-  encI64,
   encU128,
   encI128,
   encPubkey,
@@ -120,15 +118,15 @@ export const IX_TAG = {
    *
    * Wire: tag(1) + asset_index(u16) + kind(u8) + new_pubkey[32] = 36 bytes.
    *
-   * kind values (matches v16_program.rs ASSET_AUTH_* constants):
-   *   0 = INSURANCE       — insurance_authority
-   *   1 = ASSET_ADMIN     — asset_admin (burnable when asset_index != 0)
-   *   2 = BACKING_BUCKET  — backing_bucket_authority
-   *   3 = ORACLE          — oracle_authority
-   *   4 = INSURANCE_OPERATOR — insurance_operator
+   * kind values (matches v16_program.rs ASSET_AUTH_* constants, lines 5246-5250):
+   *   0 = ASSET_ADMIN       — asset_admin (burnable when asset_index != 0)
+   *   1 = INSURANCE         — insurance_authority
+   *   2 = INSURANCE_OPERATOR — insurance_operator
+   *   3 = BACKING_BUCKET    — backing_bucket_authority
+   *   4 = ORACLE            — oracle_authority
    *
-   * NOTE: The stake program uses kind=1 (ASSET_AUTH_INSURANCE=1 maps to the
-   * asset_admin route when targeting asset_index=0). See stake-program docs.
+   * NOTE: The stake program uses kind=0 (ASSET_AUTH_ADMIN) targeting asset_index=0.
+   * See stake-program docs.
    */
   UpdateAssetAuthority: 65,
   /**
@@ -357,13 +355,24 @@ function removedInstruction(name: string, tag: number, replacement?: string): ne
 }
 
 /**
- * InitMarket instruction data (256 bytes total)
- * Layout: tag(1) + admin(32) + mint(32) + indexFeedId(32) +
- *         maxStaleSecs(8) + confFilter(2) + invert(1) + unitScale(4) +
- *         RiskParams(144)
+ * InitMarket instruction data — v17 wire format.
  *
- * Note: indexFeedId is the Pyth Pull feed ID (32 bytes hex), NOT an oracle pubkey.
- * The program validates PriceUpdateV2 accounts against this feed ID at runtime.
+ * v17 wire: tag(1) + market_params(226 bytes) = 227 bytes total.
+ *
+ * BREAKING vs v12.x: admin, collateralMint, feedId, staleness, conf, invert,
+ * and unitScale are NO LONGER encoded in instruction data. In v17 these are
+ * provided as account metas or configured separately via ConfigureHybridOracle /
+ * ConfigureEwmaMark. The v17 decoder reads only the market risk parameters.
+ *
+ * The old v12.x encodeInitMarket with admin[32]+mint[32]+feedId[32]+... inline
+ * is completely rejected by the v17 program — the first field read is now
+ * max_portfolio_assets(u16), which would parse the first 2 bytes of admin as
+ * a u16 portfolio count, producing invalid config or rejection at every call.
+ *
+ * Use `InitMarketArgs` (v12 legacy, now deprecated) or the new
+ * `InitMarketV17Args` with encodeInitMarket(). The v12-era fields that are
+ * absent from v17 (feedId, staleness, conf, invert, unitScale, maxMaintFee,
+ * warmupPeriodSlots) are silently ignored when present in InitMarketV17Args.
  */
 /**
  * Optional 66-byte extended tail for InitMarket (S-4).
@@ -473,10 +482,14 @@ export interface InitMarketArgs {
 
 /**
  * Encode a Pyth feed ID (hex string) to 32-byte Uint8Array.
+ *
+ * @deprecated feedId is no longer encoded in InitMarket instruction data in v17.
+ * Oracle configuration is set separately via ConfigureHybridOracle (tag 34).
+ * Retained as a utility for off-chain feed ID validation.
  */
-const HEX_RE = /^[0-9a-fA-F]{64}$/;
+export const HEX_RE = /^[0-9a-fA-F]{64}$/;
 
-function encodeFeedId(feedId: string): Uint8Array {
+export function encodeFeedId(feedId: string): Uint8Array {
   const hex = feedId.startsWith("0x") ? feedId.slice(2) : feedId;
   if (!HEX_RE.test(hex)) {
     throw new Error(
@@ -496,209 +509,279 @@ function encodeFeedId(feedId: string): Uint8Array {
   return bytes;
 }
 
-// v12.19 layout: tag(1) + admin(32) + mint(32) + feedId(32) + staleness(8) + conf(2) + invert(1) + scale(4) +
-// markPrice(8) + maxMaintFee(16) +
-// RiskParams: hMin(8) + mmBps(8) + imBps(8) + tradeFee(8) + maxAcct(8) + newAcctFee(16) +
-//   insFloor(16) + hMax(8) + maxStale(8) + liqFee(8) + liqCap(16) + resolveDev(8) +
-//   minLiqAbs(16) + minMm(16) + minIm(16)
-// = 1+32+32+32+8+2+1+4+8+16 + 8+8+8+8+8+16+16+8+8+8+16+8+16+16+16 = 304
-const INIT_MARKET_BASE_LEN = 304;
+// v17 wire layout (v16_program.rs decode arm at tag 0):
+//   tag(1) +
+//   max_portfolio_assets(u16=2) +
+//   h_min(u64=8) + h_max(u64=8) + initial_price(u64=8) +
+//   min_nonzero_mm_req(u128=16) + min_nonzero_im_req(u128=16) +
+//   maintenance_margin_bps(u64=8) + initial_margin_bps(u64=8) +
+//   max_trading_fee_bps(u64=8) + trade_fee_base_bps(u64=8) +
+//   liquidation_fee_bps(u64=8) +
+//   liquidation_fee_cap(u128=16) + min_liquidation_abs(u128=16) +
+//   max_price_move_bps_per_slot(u64=8) + max_accrual_dt_slots(u64=8) +
+//   max_abs_funding_e9_per_slot(u64=8) + min_funding_lifetime_slots(u64=8) +
+//   max_account_b_settlement_chunks(u64=8) + max_bankrupt_close_chunks(u64=8) +
+//   max_bankrupt_close_lifetime_slots(u64=8) +
+//   public_b_chunk_atoms(u128=16) + maintenance_fee_per_slot(u128=16)
+// Sizes: u16(2) + u64×15(120) + u128×6(96) = 218 bytes payload + 1 byte tag = 219 total
+const INIT_MARKET_V17_LEN = 219;
 
-// Extended tail v1: u16(2) + u64*8(64) = 66 bytes
-//   (matches percolator.rs EXTENDED_TAIL_LEN_V1 = 2 + 8*8)
-const INIT_MARKET_EXTENDED_TAIL_LEN_V1 = 66;
-// Extended tail v2 (Wave 9): v1 + max_price_move_bps_per_slot u64 = 74 bytes
-//   (matches percolator.rs EXTENDED_TAIL_LEN_V2 = EXTENDED_TAIL_LEN_V1 + 8)
-const INIT_MARKET_EXTENDED_TAIL_LEN_V2 = INIT_MARKET_EXTENDED_TAIL_LEN_V1 + 8;
-
-/**
- * Default extended-tail values matching the deployed wrapper's `unwrap_or(DEFAULT_*)`
- * config seeds. Used when the caller omits `extendedTail`.
- *
- * Wrapper anchors (percolator-prog/src/percolator.rs):
- *   DEFAULT_FUNDING_HORIZON_SLOTS = 500     (line 258)
- *   DEFAULT_FUNDING_K_BPS = 100              (line 259)
- *   DEFAULT_FUNDING_MAX_PREMIUM_BPS = 500    (line 260)
- *   DEFAULT_FUNDING_MAX_E9_PER_SLOT = 1000   (line 267)
- *   force_close_delay_slots = 1              (decoder L1837 default for empty rest)
- *
- * Note: the deployed v12.19 wrapper has a bug where `read_risk_params`
- * (percolator.rs:2413) requires `input.len() >= 40` after `min_liquidation_abs`.
- * That makes the outer decoder's "rest is empty → use defaults" branch
- * (percolator.rs:1818-1838) dead code — the inner check fires first with
- * InvalidInstructionData. The SDK works around this by ALWAYS emitting the
- * 66-byte extended tail, with these wrapper-default values when the caller
- * doesn't provide an explicit one.
- */
-const DEFAULT_EXTENDED_TAIL: InitMarketExtendedTail = {
-  insuranceWithdrawMaxBps: 0,
-  insuranceWithdrawCooldownSlots: 0n,
-  permissionlessResolveStaleSlots: 0n,
-  fundingHorizonSlots: 500n,
-  fundingKBps: 100n,
-  fundingMaxPremiumBps: 500n,
-  fundingMaxBpsPerSlot: 1000n,
-  markMinFee: 0n,
-  forceCloseDelaySlots: 1n,
-};
+// Note: v12.x extended-tail constants and encodeExtendedTail helper have been
+// removed in v17. The v17 encodeInitMarket encodes a fixed 227-byte payload
+// with no optional tail — all parameters are required fields in the main body.
 
 /**
- * Encode the optional InitMarket extended tail.
+ * InitMarket v17 argument interface.
  *
- * Emits v1 (66 bytes) or v2 (74 bytes) depending on whether
- * `maxPriceMoveBpsPerSlot` is provided. Field order matches the
- * on-chain parser at percolator.rs:1946-2113:
+ * admin and collateralMint are passed as account metas (accounts[0] and
+ * accounts[2] respectively), NOT in instruction data.
  *
- *   v1: iwm(u16) iwc(u64) prs(u64) fh(u64) fk(u64) fmp(i64) fms(i64) mmf(u64) fcd(u64)
- *   v2: v1 fields + max_price_move_bps_per_slot(u64)
+ * Oracle configuration (feedId, staleness, confFilter, invert, unitScale) is
+ * set separately via ConfigureHybridOracle (tag 34) or ConfigureEwmaMark (tag 35)
+ * after the market is created.
  *
- * @param t Extended tail parameters
- * @returns 66 or 74 byte Uint8Array
+ * Field order in wire format matches v16_program.rs InitMarket decoder exactly:
+ *   max_portfolio_assets, h_min, h_max, initial_price,
+ *   min_nonzero_mm_req, min_nonzero_im_req,
+ *   maintenance_margin_bps, initial_margin_bps,
+ *   max_trading_fee_bps, trade_fee_base_bps,
+ *   liquidation_fee_bps, liquidation_fee_cap, min_liquidation_abs,
+ *   max_price_move_bps_per_slot, max_accrual_dt_slots,
+ *   max_abs_funding_e9_per_slot, min_funding_lifetime_slots,
+ *   max_account_b_settlement_chunks, max_bankrupt_close_chunks,
+ *   max_bankrupt_close_lifetime_slots,
+ *   public_b_chunk_atoms, maintenance_fee_per_slot.
  */
-function encodeExtendedTail(t: InitMarketExtendedTail): Uint8Array {
-  const v1 = concatBytes(
-    encU16(t.insuranceWithdrawMaxBps),
-    encU64(t.insuranceWithdrawCooldownSlots),
-    encU64(t.permissionlessResolveStaleSlots),
-    encU64(t.fundingHorizonSlots),
-    encU64(t.fundingKBps),
-    encI64(t.fundingMaxPremiumBps),
-    encI64(t.fundingMaxBpsPerSlot),
-    encU64(t.markMinFee),
-    encU64(t.forceCloseDelaySlots),
-  );
-  if (t.maxPriceMoveBpsPerSlot === undefined) {
-    return v1;
-  }
-  // v2 tail: append max_price_move_bps_per_slot. The wrapper rejects
-  // a zero value with InvalidConfigParam (matches toly:2378-2380), so
-  // we surface that as an SDK-side throw before transmission.
-  const mpm = t.maxPriceMoveBpsPerSlot;
-  const mpmBigint = typeof mpm === "string" ? BigInt(mpm) : mpm;
-  if (mpmBigint === 0n) {
-    throw new Error(
-      "encodeInitMarket: maxPriceMoveBpsPerSlot must be > 0 (the wrapper " +
-        "rejects zero with InvalidConfigParam)",
-    );
-  }
-  return concatBytes(v1, encU64(mpmBigint));
+export interface InitMarketV17Args {
+  /** Max number of portfolios (u16). Must be > 0 and <= WRAPPER_MAX_PORTFOLIO_ASSETS. */
+  maxPortfolioAssets: number;
+  /** Minimum funding horizon in slots (u64). */
+  hMin: bigint | string;
+  /** Maximum funding horizon in slots (u64). */
+  hMax: bigint | string;
+  /** Initial mark price in e6 units (u64). Must be > 0 and <= MAX_ORACLE_PRICE. */
+  initialPrice: bigint | string;
+  /** Minimum non-zero maintenance margin requirement (u128). */
+  minNonzeroMmReq: bigint | string;
+  /** Minimum non-zero initial margin requirement (u128). */
+  minNonzeroImReq: bigint | string;
+  /** Maintenance margin ratio in bps (u64). */
+  maintenanceMarginBps: bigint | string;
+  /** Initial margin ratio in bps (u64). */
+  initialMarginBps: bigint | string;
+  /** Maximum trading fee in bps (u64). Must be >= trade_fee_base_bps. */
+  maxTradingFeeBps: bigint | string;
+  /** Base trade fee in bps (u64). Must be <= max_trading_fee_bps. */
+  tradeFeeBaseBps: bigint | string;
+  /** Liquidation fee in bps (u64). */
+  liquidationFeeBps: bigint | string;
+  /** Liquidation fee cap in absolute units (u128). */
+  liquidationFeeCap: bigint | string;
+  /** Minimum liquidation size in absolute units (u128). */
+  minLiquidationAbs: bigint | string;
+  /** Maximum price movement per slot in bps (u64). */
+  maxPriceMoveBpsPerSlot: bigint | string;
+  /** Maximum accrual delta-time in slots (u64). */
+  maxAccrualDtSlots: bigint | string;
+  /** Maximum absolute funding rate in e9 per slot (u64). */
+  maxAbsFundingE9PerSlot: bigint | string;
+  /** Minimum funding lifetime in slots (u64). */
+  minFundingLifetimeSlots: bigint | string;
+  /** Maximum account-B settlement chunks per crank (u64). */
+  maxAccountBSettlementChunks: bigint | string;
+  /** Maximum bankrupt-close chunks per crank (u64). */
+  maxBankruptCloseChunks: bigint | string;
+  /** Maximum bankrupt-close lifetime in slots (u64). */
+  maxBankruptCloseLifetimeSlots: bigint | string;
+  /** Public-B chunk size in atoms (u128). */
+  publicBChunkAtoms: bigint | string;
+  /** Maintenance fee per slot in absolute units (u128). Must be <= MAX_PROTOCOL_FEE_ABS. */
+  maintenanceFeePerSlot: bigint | string;
 }
 
 /**
- * Encode InitMarket instruction data.
+ * Encode InitMarket instruction data (v17 wire format).
  *
- * Produces either a 344-byte base payload (no extended tail) or a 410-byte
- * payload (344 + 66 extended tail) depending on whether `args.extendedTail`
- * is provided and contains at least one non-zero field.
+ * Produces a 219-byte payload: tag(1) + market parameter fields (218 bytes).
+ * admin and collateralMint go into account metas (accounts[0] and accounts[2]).
  *
- * The program (percolator.rs:1527-1545) treats an empty `rest` as all-zero
- * defaults, so the 344-byte form is fully backward-compatible.
+ * The old v12.x `InitMarketArgs` interface is accepted for source-compat via
+ * overload but the v12 fields (admin, collateralMint, feedId, staleness, conf,
+ * invert, unitScale, maxMaintenanceFeePerSlot, extendedTail, warmupPeriodSlots,
+ * newAccountFee, insuranceFloor, maxCrankStalenessSlots, liquidationBufferBps,
+ * minInitialDeposit) are silently ignored — provide `InitMarketV17Args` instead.
  *
- * @param args InitMarket arguments
- * @returns Encoded instruction bytes
+ * @param args  v17 market parameters (InitMarketV17Args)
+ * @returns 227-byte Uint8Array
  *
  * @example
  * ```ts
- * const ix = encodeInitMarket({
- *   admin: adminPk,
- *   collateralMint: mintPk,
- *   indexFeedId: "0000...0000",
- *   // ... required fields ...
- *   extendedTail: {
- *     insuranceWithdrawMaxBps: 500,
- *     insuranceWithdrawCooldownSlots: 216000n,
- *     permissionlessResolveStaleSlots: 0n,
- *     fundingHorizonSlots: 0n,
- *     fundingKBps: 0n,
- *     fundingMaxPremiumBps: 0n,
- *     fundingMaxBpsPerSlot: 0n,
- *     markMinFee: 0n,
- *     forceCloseDelaySlots: 0n,
- *   },
+ * const data = encodeInitMarket({
+ *   maxPortfolioAssets: 256,
+ *   hMin: 1000n,
+ *   hMax: 100000n,
+ *   initialPrice: 50_000_000_000n,
+ *   minNonzeroMmReq: 1_000_000n,
+ *   minNonzeroImReq: 2_000_000n,
+ *   maintenanceMarginBps: 500n,
+ *   initialMarginBps: 1000n,
+ *   maxTradingFeeBps: 100n,
+ *   tradeFeeBaseBps: 30n,
+ *   liquidationFeeBps: 100n,
+ *   liquidationFeeCap: 10_000_000n,
+ *   minLiquidationAbs: 1_000_000n,
+ *   maxPriceMoveBpsPerSlot: 4n,
+ *   maxAccrualDtSlots: 600n,
+ *   maxAbsFundingE9PerSlot: 1000n,
+ *   minFundingLifetimeSlots: 50n,
+ *   maxAccountBSettlementChunks: 10n,
+ *   maxBankruptCloseChunks: 10n,
+ *   maxBankruptCloseLifetimeSlots: 500n,
+ *   publicBChunkAtoms: 1_000_000n,
+ *   maintenanceFeePerSlot: 0n,
  * });
  * ```
  */
-export function encodeInitMarket(args: InitMarketArgs): Uint8Array {
-  // Resolve hMin/hMax with fallback to warmupPeriodSlots for backwards compat
-  const hMin = args.hMin ?? args.warmupPeriodSlots ?? 0n;
-  const hMax = args.hMax ?? args.warmupPeriodSlots ?? 0n;
+export function encodeInitMarket(args: InitMarketV17Args | InitMarketArgs): Uint8Array {
+  // Detect v17 args by presence of maxPortfolioAssets (v17) vs admin (v12)
+  const isV17Args = 'maxPortfolioAssets' in args;
 
-  const header = concatBytes(
+  let maxPortfolioAssets: number;
+  let hMin: bigint | string;
+  let hMax: bigint | string;
+  let initialPrice: bigint | string;
+  let minNonzeroMmReq: bigint | string;
+  let minNonzeroImReq: bigint | string;
+  let maintenanceMarginBps: bigint | string;
+  let initialMarginBps: bigint | string;
+  let maxTradingFeeBps: bigint | string;
+  let tradeFeeBaseBps: bigint | string;
+  let liquidationFeeBps: bigint | string;
+  let liquidationFeeCap: bigint | string;
+  let minLiquidationAbs: bigint | string;
+  let maxPriceMoveBpsPerSlot: bigint | string;
+  let maxAccrualDtSlots: bigint | string;
+  let maxAbsFundingE9PerSlot: bigint | string;
+  let minFundingLifetimeSlots: bigint | string;
+  let maxAccountBSettlementChunks: bigint | string;
+  let maxBankruptCloseChunks: bigint | string;
+  let maxBankruptCloseLifetimeSlots: bigint | string;
+  let publicBChunkAtoms: bigint | string;
+  let maintenanceFeePerSlot: bigint | string;
+
+  if (isV17Args) {
+    const v = args as InitMarketV17Args;
+    maxPortfolioAssets = v.maxPortfolioAssets;
+    hMin = v.hMin;
+    hMax = v.hMax;
+    initialPrice = v.initialPrice;
+    minNonzeroMmReq = v.minNonzeroMmReq;
+    minNonzeroImReq = v.minNonzeroImReq;
+    maintenanceMarginBps = v.maintenanceMarginBps;
+    initialMarginBps = v.initialMarginBps;
+    maxTradingFeeBps = v.maxTradingFeeBps;
+    tradeFeeBaseBps = v.tradeFeeBaseBps;
+    liquidationFeeBps = v.liquidationFeeBps;
+    liquidationFeeCap = v.liquidationFeeCap;
+    minLiquidationAbs = v.minLiquidationAbs;
+    maxPriceMoveBpsPerSlot = v.maxPriceMoveBpsPerSlot;
+    maxAccrualDtSlots = v.maxAccrualDtSlots;
+    maxAbsFundingE9PerSlot = v.maxAbsFundingE9PerSlot;
+    minFundingLifetimeSlots = v.minFundingLifetimeSlots;
+    maxAccountBSettlementChunks = v.maxAccountBSettlementChunks;
+    maxBankruptCloseChunks = v.maxBankruptCloseChunks;
+    maxBankruptCloseLifetimeSlots = v.maxBankruptCloseLifetimeSlots;
+    publicBChunkAtoms = v.publicBChunkAtoms;
+    maintenanceFeePerSlot = v.maintenanceFeePerSlot;
+  } else {
+    // v12.x InitMarketArgs compat shim — map old fields to v17 layout.
+    // Fields removed in v17 (admin, collateralMint, feedId, staleness, conf,
+    // invert, unitScale, extendedTail) are silently ignored.
+    const v = args as InitMarketArgs;
+    const resolvedHMin = v.hMin ?? v.warmupPeriodSlots ?? 0n;
+    const resolvedHMax = v.hMax ?? v.warmupPeriodSlots ?? 0n;
+    maxPortfolioAssets = typeof v.maxAccounts === 'string' ? parseInt(v.maxAccounts, 10) : Number(v.maxAccounts);
+    hMin = resolvedHMin;
+    hMax = resolvedHMax;
+    initialPrice = v.initialMarkPriceE6;
+    minNonzeroMmReq = v.minNonzeroMmReq;
+    minNonzeroImReq = v.minNonzeroImReq;
+    maintenanceMarginBps = v.maintenanceMarginBps;
+    initialMarginBps = v.initialMarginBps;
+    // v12 tradingFeeBps maps to max_trading_fee_bps and trade_fee_base_bps
+    maxTradingFeeBps = v.tradingFeeBps;
+    tradeFeeBaseBps = v.tradingFeeBps;
+    liquidationFeeBps = v.liquidationFeeBps;
+    liquidationFeeCap = v.liquidationFeeCap;
+    minLiquidationAbs = v.minLiquidationAbs;
+    // v12 ExtendedTail fields mapped to v17 equivalents (default safe values)
+    maxPriceMoveBpsPerSlot = v.extendedTail?.maxPriceMoveBpsPerSlot ?? 4n;
+    maxAccrualDtSlots = v.maxCrankStalenessSlots ?? 0n;
+    maxAbsFundingE9PerSlot = v.extendedTail?.fundingMaxBpsPerSlot ?? 1000n;
+    minFundingLifetimeSlots = 0n;
+    maxAccountBSettlementChunks = 0n;
+    maxBankruptCloseChunks = 0n;
+    maxBankruptCloseLifetimeSlots = 0n;
+    publicBChunkAtoms = 0n;
+    maintenanceFeePerSlot = v.maintenanceFeePerSlot;
+  }
+
+  const data = concatBytes(
     encU8(IX_TAG.InitMarket),
-    encPubkey(args.admin),
-    encPubkey(args.collateralMint),
-    encodeFeedId(args.indexFeedId),
-    encU64(args.maxStalenessSecs),
-    encU16(args.confFilterBps),
-    encU8(args.invert),
-    encU32(args.unitScale),
-    encU64(args.initialMarkPriceE6),
-    encU128(args.maxMaintenanceFeePerSlot ?? 0n),
-  );
-
-  // RiskParams wire format — must match read_risk_params() in
-  // percolator.rs. 13 fields (h_min through min_liquidation_abs) +
-  // (min_nonzero_mm_req, min_nonzero_im_req) tail.
-  const riskParamsCommon = concatBytes(
+    encU16(maxPortfolioAssets),
     encU64(hMin),
-    encU64(args.maintenanceMarginBps),
-    encU64(args.initialMarginBps),
-    encU64(args.tradingFeeBps),
-    encU64(args.maxAccounts),
-    encU128(args.newAccountFee),
-    encU128(args.insuranceFloor ?? 0n),
     encU64(hMax),
-    encU64(args.maxCrankStalenessSlots),
-    encU64(args.liquidationFeeBps),
-    encU128(args.liquidationFeeCap),
-    encU64(args.liquidationBufferBps ?? 0n),
-    encU128(args.minLiquidationAbs),
+    encU64(initialPrice),
+    encU128(minNonzeroMmReq),
+    encU128(minNonzeroImReq),
+    encU64(maintenanceMarginBps),
+    encU64(initialMarginBps),
+    encU64(maxTradingFeeBps),
+    encU64(tradeFeeBaseBps),
+    encU64(liquidationFeeBps),
+    encU128(liquidationFeeCap),
+    encU128(minLiquidationAbs),
+    encU64(maxPriceMoveBpsPerSlot),
+    encU64(maxAccrualDtSlots),
+    encU64(maxAbsFundingE9PerSlot),
+    encU64(minFundingLifetimeSlots),
+    encU64(maxAccountBSettlementChunks),
+    encU64(maxBankruptCloseChunks),
+    encU64(maxBankruptCloseLifetimeSlots),
+    encU128(publicBChunkAtoms),
+    encU128(maintenanceFeePerSlot),
   );
 
-  const riskParamsTail = concatBytes(
-    encU128(args.minNonzeroMmReq),
-    encU128(args.minNonzeroImReq),
-  );
-
-  const base = concatBytes(header, riskParamsCommon, riskParamsTail);
-
-  if (base.length !== INIT_MARKET_BASE_LEN) {
+  if (data.length !== INIT_MARKET_V17_LEN) {
     throw new Error(
-      `encodeInitMarket: base payload expected ${INIT_MARKET_BASE_LEN} bytes, got ${base.length}`,
+      `encodeInitMarket: expected ${INIT_MARKET_V17_LEN} bytes, got ${data.length}`,
     );
   }
 
-  // ALWAYS append the extended tail. The deployed wrapper rejects base-only
-  // payloads via an inner read_risk_params length check
-  // (percolator.rs:2568-2570) regardless of the outer "rest is empty →
-  // defaults" logic. See DEFAULT_EXTENDED_TAIL doc comment above.
-  //
-  // The wrapper accepts both v1 (66 bytes) and v2 (74 bytes) tails. v1
-  // makes the wrapper use its deployment-default
-  // max_price_move_bps_per_slot (4); v2 overrides per-market. The
-  // encoder chooses based on whether the caller set
-  // extendedTail.maxPriceMoveBpsPerSlot.
-  const tail = encodeExtendedTail(args.extendedTail ?? DEFAULT_EXTENDED_TAIL);
-  if (
-    tail.length !== INIT_MARKET_EXTENDED_TAIL_LEN_V1 &&
-    tail.length !== INIT_MARKET_EXTENDED_TAIL_LEN_V2
-  ) {
-    throw new Error(
-      `encodeInitMarket: extended tail expected ${INIT_MARKET_EXTENDED_TAIL_LEN_V1} or ${INIT_MARKET_EXTENDED_TAIL_LEN_V2} bytes, got ${tail.length}`,
-    );
-  }
-  return concatBytes(base, tail);
+  return data;
 }
 
 /**
- * InitUser instruction data (9 bytes)
+ * InitPortfolio / InitUser instruction data.
+ *
+ * v17 wire: tag(1) only — 1 byte total.
+ *
+ * BREAKING vs v12.x: the feePayment(u64) arg was removed. The program
+ * decoder at `1 => Self::InitPortfolio` reads no bytes after the tag byte.
+ * Sending extra bytes causes garbage reads in downstream decoder arms.
+ *
+ * @example
+ * ```ts
+ * const data = encodeInitUser();
+ * ```
  */
 export interface InitUserArgs {
-  feePayment: bigint | string;
+  /** @deprecated feePayment is ignored in v17 — kept for source compatibility only. */
+  feePayment?: bigint | string;
 }
 
-export function encodeInitUser(args: InitUserArgs): Uint8Array {
-  return concatBytes(encU8(IX_TAG.InitUser), encU64(args.feePayment));
+export function encodeInitUser(_args?: InitUserArgs): Uint8Array {
+  return new Uint8Array([IX_TAG.InitPortfolio]);
 }
 
 /**
@@ -720,34 +803,61 @@ export function encodeInitLP(args: InitLPArgs): Uint8Array {
 }
 
 /**
- * DepositCollateral instruction data (11 bytes)
+ * DepositCollateral instruction data.
+ *
+ * v17 wire: tag(1) + amount(u128 LE) = 17 bytes.
+ *
+ * BREAKING vs v12.x: userIdx(u16) removed; amount promoted u64→u128.
+ * The v17 decoder reads `amount: read_u128(&mut rest)?` at bytes [1..17].
+ * Sending the old 11-byte payload (userIdx+u64) gives a 10-byte rest which
+ * is 6 bytes short for read_u128 — InvalidInstructionData on every call.
+ *
+ * @param amount  Collateral to deposit (u128; supports sub-cent precision).
+ *
+ * @example
+ * ```ts
+ * const data = encodeDepositCollateral({ amount: 1_000_000n });
+ * ```
  */
 export interface DepositCollateralArgs {
-  userIdx: number;
+  /** @deprecated userIdx is no longer needed — portfolios are identified by account key in v17. */
+  userIdx?: number;
   amount: bigint | string;
 }
 
 export function encodeDepositCollateral(args: DepositCollateralArgs): Uint8Array {
   return concatBytes(
     encU8(IX_TAG.DepositCollateral),
-    encU16(args.userIdx),
-    encU64(args.amount),
+    encU128(args.amount),
   );
 }
 
 /**
- * WithdrawCollateral instruction data (11 bytes)
+ * WithdrawCollateral instruction data.
+ *
+ * v17 wire: tag(1) + amount(u128 LE) = 17 bytes.
+ *
+ * BREAKING vs v12.x: userIdx(u16) removed; amount promoted u64→u128.
+ * The v17 decoder reads `amount: read_u128(&mut rest)?` at bytes [1..17].
+ * The old 11-byte payload gives a 10-byte rest — InvalidInstructionData.
+ *
+ * @param amount  Collateral to withdraw (u128).
+ *
+ * @example
+ * ```ts
+ * const data = encodeWithdrawCollateral({ amount: 500_000n });
+ * ```
  */
 export interface WithdrawCollateralArgs {
-  userIdx: number;
+  /** @deprecated userIdx is no longer needed — portfolios are identified by account key in v17. */
+  userIdx?: number;
   amount: bigint | string;
 }
 
 export function encodeWithdrawCollateral(args: WithdrawCollateralArgs): Uint8Array {
   return concatBytes(
     encU8(IX_TAG.WithdrawCollateral),
-    encU16(args.userIdx),
-    encU64(args.amount),
+    encU128(args.amount),
   );
 }
 
@@ -867,13 +977,19 @@ export interface TradeNoCpiArgs {
 }
 
 export function encodeTradeNoCpi(args: TradeNoCpiArgs): Uint8Array {
-  return concatBytes(
+  const data = concatBytes(
     encU8(IX_TAG.TradeNoCpi),
     encU16(args.assetIndex),
     encI128(args.sizeQ),
     encU64(args.execPrice),
     encU64(args.feeBps),
   );
+  if (data.length !== 35) {
+    throw new Error(
+      `encodeTradeNoCpi: expected 35 bytes (tag+u16+i128+u64+u64), got ${data.length}`,
+    );
+  }
+  return data;
 }
 
 /**
@@ -891,25 +1007,50 @@ export function encodeLiquidateAtOracle(args: LiquidateAtOracleArgs): Uint8Array
 }
 
 /**
- * CloseAccount instruction data (3 bytes)
+ * ClosePortfolio / CloseAccount instruction data.
+ *
+ * v17 wire: tag(1) only — 1 byte total.
+ *
+ * BREAKING vs v12.x: userIdx(u16) removed. The v17 decoder at
+ * `8 => Self::ClosePortfolio` reads no bytes after the tag. The extra 2
+ * bytes from the old userIdx field cause InvalidInstructionData.
+ *
+ * @example
+ * ```ts
+ * const data = encodeCloseAccount();
+ * ```
  */
 export interface CloseAccountArgs {
-  userIdx: number;
+  /** @deprecated userIdx is not read in v17; portfolios are identified by account key. */
+  userIdx?: number;
 }
 
-export function encodeCloseAccount(args: CloseAccountArgs): Uint8Array {
-  return concatBytes(encU8(IX_TAG.CloseAccount), encU16(args.userIdx));
+export function encodeCloseAccount(_args?: CloseAccountArgs): Uint8Array {
+  return new Uint8Array([IX_TAG.ClosePortfolio]);
 }
 
 /**
- * TopUpInsurance instruction data (9 bytes)
+ * TopUpInsurance instruction data.
+ *
+ * v17 wire: tag(1) + amount(u128 LE) = 17 bytes.
+ *
+ * BREAKING vs v12.x: amount promoted u64→u128. The v17 decoder at tag 9
+ * reads `amount: read_u128(&mut rest)?` which requires 16 bytes after the
+ * tag. The old 8-byte u64 payload is 8 bytes short — InvalidInstructionData.
+ *
+ * @param amount  Amount to top up the insurance fund (u128).
+ *
+ * @example
+ * ```ts
+ * const data = encodeTopUpInsurance({ amount: 10_000_000n });
+ * ```
  */
 export interface TopUpInsuranceArgs {
   amount: bigint | string;
 }
 
 export function encodeTopUpInsurance(args: TopUpInsuranceArgs): Uint8Array {
-  return concatBytes(encU8(IX_TAG.TopUpInsurance), encU64(args.amount));
+  return concatBytes(encU8(IX_TAG.TopUpInsurance), encU128(args.amount));
 }
 
 /**
@@ -947,13 +1088,19 @@ export interface TradeCpiArgs {
 }
 
 export function encodeTradeCpi(args: TradeCpiArgs): Uint8Array {
-  return concatBytes(
+  const data = concatBytes(
     encU8(IX_TAG.TradeCpi),
     encU16(args.assetIndex),
     encI128(args.sizeQ),
     encU64(args.feeBps),
     encU64(args.limitPrice),
   );
+  if (data.length !== 35) {
+    throw new Error(
+      `encodeTradeCpi: expected 35 bytes (tag+u16+i128+u64+u64), got ${data.length}`,
+    );
+  }
+  return data;
 }
 
 /**
@@ -1077,38 +1224,62 @@ export function encodeSetOraclePriceCap(_args: SetOraclePriceCapArgs): Uint8Arra
 }
 
 /**
- * ResolveMode for ResolveMarket — wrapper expects this byte explicitly per
- * upstream a7186d5 / PORT-1 / KL-WIRE-FORMAT-DIVERGENCE-2:
- *   0 = Ordinary  (default; settles at last good oracle / hyperp mark)
- *   1 = Degenerate (rate=0 dead-oracle settlement)
- *   2 = REMOVED   (decoder rejects with InvalidInstructionData)
+ * ResolveMode constants — retained for source compatibility with v12.x callers.
+ *
+ * @deprecated v17 ResolveMarket (tag 19) has no mode byte. These constants are
+ * no longer encoded into the instruction data. They may be used in logging or
+ * off-chain logic but must not be passed to encodeResolveMarket.
  */
 export const RESOLVE_MODE_ORDINARY = 0 as const;
 export const RESOLVE_MODE_DEGENERATE = 1 as const;
 export type ResolveMode = typeof RESOLVE_MODE_ORDINARY | typeof RESOLVE_MODE_DEGENERATE;
 
 /**
- * ResolveMarket instruction data (2 bytes: tag + mode).
- * Resolves a market — sets RESOLVED flag, positions force-closed via crank.
- * Requires admin oracle price (authority_price_e6) to be set first.
+ * ResolveMarket instruction data.
  *
- * @param args.mode 0 = Ordinary, 1 = Degenerate. Defaults to Ordinary.
+ * v17 wire: tag(1) only — 1 byte total.
  *
- * Wave 12-J: previously this encoder emitted only the tag byte; the wrapper's
- * decoder requires a `mode: u8` per PORT-1. Calling without `mode` defaults
- * to Ordinary (the historical implicit behavior).
+ * BREAKING vs v12.x PORT-1 / Wave-12-J: the mode byte has been REMOVED.
+ * The v17 decoder at `19 => Self::ResolveMarket` reads no bytes after the
+ * tag. Sending a 2-byte payload causes the extra byte to be consumed by the
+ * next read in a subsequent call, corrupting the instruction stream.
+ *
+ * The `mode` argument is accepted for source compatibility but is silently ignored.
+ *
+ * @example
+ * ```ts
+ * const data = encodeResolveMarket();
+ * ```
  */
-export function encodeResolveMarket(args: { mode?: ResolveMode } = {}): Uint8Array {
-  const mode = args.mode ?? RESOLVE_MODE_ORDINARY;
-  return concatBytes(encU8(IX_TAG.ResolveMarket), encU8(mode));
+export function encodeResolveMarket(_args: { mode?: ResolveMode } = {}): Uint8Array {
+  return new Uint8Array([IX_TAG.ResolveMarket]);
 }
 
 /**
- * WithdrawInsurance instruction data (1 byte)
+ * WithdrawInsurance instruction data.
+ *
+ * v17 wire: tag(1) + amount(u128 LE) = 17 bytes.
+ *
+ * BREAKING vs v12.x: amount(u128) is now REQUIRED. The v17 decoder at
+ * tag 41 reads `amount: read_u128(&mut rest)?` — without 16 bytes of amount,
+ * read_u128 returns Err(InvalidInstructionData). Every call with the old
+ * 1-byte payload fails on devnet/mainnet.
+ *
  * Withdraw insurance fund to admin (requires RESOLVED and all positions closed).
+ *
+ * @param amount  Amount to withdraw from the insurance fund (u128).
+ *
+ * @example
+ * ```ts
+ * const data = encodeWithdrawInsurance({ amount: 5_000_000n });
+ * ```
  */
-export function encodeWithdrawInsurance(): Uint8Array {
-  return encU8(IX_TAG.WithdrawInsurance);
+export interface WithdrawInsuranceArgs {
+  amount: bigint | string;
+}
+
+export function encodeWithdrawInsurance(args: WithdrawInsuranceArgs): Uint8Array {
+  return concatBytes(encU8(IX_TAG.WithdrawInsurance), encU128(args.amount));
 }
 
 /**
@@ -2415,24 +2586,37 @@ export function encodeDepositFeeCredits(_args: DepositFeeCreditsArgs): Uint8Arra
 }
 
 /**
- * ConvertReleasedPnl (Tag 28) — voluntary PnL conversion with open position
- * (wrapper §10.4.1). Owner only.
+ * ConvertReleasedPnl (tag 28) — voluntary PnL conversion with open position.
+ * Owner only.
  *
- * Wrapper decode: src/percolator.rs:2103. Wire: tag(1) + user_idx u16(2)
- * + amount u64(8).
+ * v17 wire: tag(1) + amount(u128 LE) = 17 bytes.
+ *
+ * BREAKING vs v12.x: userIdx(u16) removed; amount promoted u64→u128.
+ * The v17 decoder at tag 28 reads `amount: read_u128(&mut rest)?` — the
+ * old 2-byte userIdx is consumed as the first 2 bytes of the u128, then
+ * only 8 bytes remain for the u128 tail (14 bytes short). Every call fails
+ * with InvalidInstructionData. Also, `userIdx` is stale — v17 portfolios
+ * are identified by account key alone.
  *
  * Accounts: see ACCOUNTS_CONVERT_RELEASED_PNL.
+ *
+ * @param amount  Amount of released PnL to convert (u128).
+ *
+ * @example
+ * ```ts
+ * const data = encodeConvertReleasedPnl({ amount: 1_000_000n });
+ * ```
  */
 export interface ConvertReleasedPnlArgs {
-  userIdx: number;
+  /** @deprecated userIdx is not needed in v17 — portfolios are identified by account key. */
+  userIdx?: number;
   amount: bigint | string;
 }
 
 export function encodeConvertReleasedPnl(args: ConvertReleasedPnlArgs): Uint8Array {
   return concatBytes(
     encU8(IX_TAG.ConvertReleasedPnl),
-    encU16(args.userIdx),
-    encU64(args.amount),
+    encU128(args.amount),
   );
 }
 
@@ -2475,22 +2659,33 @@ export function encodeUpdateAuthority(args: UpdateAuthorityArgs): Uint8Array {
 /**
  * Per-asset authority kind for UpdateAssetAuthority (tag 65).
  *
- * Source: v16_program.rs Instruction::UpdateAssetAuthority + ASSET_AUTH_* consts.
- *   0 = INSURANCE       — insurance_authority in AssetOracleProfileV16
- *   1 = ASSET_ADMIN     — asset_admin (only burnable when asset_index != 0)
- *   2 = BACKING_BUCKET  — backing_bucket_authority
- *   3 = ORACLE          — oracle_authority
- *   4 = INSURANCE_OPERATOR — insurance_operator
+ * Exact mapping from v16_program.rs lines 5246-5250:
+ *   ASSET_AUTH_ADMIN              = 0  →  AssetAdmin
+ *   ASSET_AUTH_INSURANCE          = 1  →  Insurance
+ *   ASSET_AUTH_INSURANCE_OPERATOR = 2  →  InsuranceOperator
+ *   ASSET_AUTH_BACKING_BUCKET     = 3  →  BackingBucket
+ *   ASSET_AUTH_ORACLE             = 4  →  Oracle
  *
- * Stake program uses kind=1 (ASSET_ADMIN) targeting asset_index=0 to bind
- * the stake PDA-custody vault into the insurance_authority slot.
+ * CRITICAL: the kind byte is sent on-chain and routes to a specific authority
+ * slot. Wrong values silently corrupt authority state:
+ *   - Calling with kind=Insurance(1) rotates `insurance_authority` (correct).
+ *   - Calling with the OLD wrong value 0 for Insurance hits `asset_admin` slot,
+ *     corrupting the market-level admin key instead.
+ *
+ * Stake program uses kind=AssetAdmin(0) targeting asset_index=0 to bind
+ * the stake vault PDA into the asset_admin authority slot.
  */
 export const ASSET_AUTH_KIND = {
-  Insurance: 0,
-  AssetAdmin: 1,
-  BackingBucket: 2,
-  Oracle: 3,
-  InsuranceOperator: 4,
+  /** ASSET_AUTH_ADMIN = 0 in v16_program.rs:5246 — routes to asset_admin field */
+  AssetAdmin: 0,
+  /** ASSET_AUTH_INSURANCE = 1 in v16_program.rs:5247 — routes to insurance_authority field */
+  Insurance: 1,
+  /** ASSET_AUTH_INSURANCE_OPERATOR = 2 in v16_program.rs:5248 — routes to insurance_operator field */
+  InsuranceOperator: 2,
+  /** ASSET_AUTH_BACKING_BUCKET = 3 in v16_program.rs:5249 — routes to backing_bucket_authority field */
+  BackingBucket: 3,
+  /** ASSET_AUTH_ORACLE = 4 in v16_program.rs:5250 — routes to oracle_authority field */
+  Oracle: 4,
 } as const;
 Object.freeze(ASSET_AUTH_KIND);
 
@@ -2511,6 +2706,7 @@ export type AssetAuthKind = (typeof ASSET_AUTH_KIND)[keyof typeof ASSET_AUTH_KIN
  * @example
  * ```ts
  * // Rotate insurance authority for asset 0
+ * // ASSET_AUTH_KIND.Insurance = 1 (routes to insurance_authority slot on-chain)
  * const data = encodeUpdateAssetAuthority({
  *   assetIndex: 0,
  *   kind: ASSET_AUTH_KIND.Insurance,

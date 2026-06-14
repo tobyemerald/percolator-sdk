@@ -112,8 +112,9 @@ describe("Account orderings", () => {
     expect(ACCOUNTS_INIT_MARKET).toHaveLength(9);
   });
 
-  it("ACCOUNTS_INIT_USER has 6 accounts (v12.17: clock added)", () => {
-    expect(ACCOUNTS_INIT_USER).toHaveLength(6);
+  it("ACCOUNTS_INIT_USER has 3 accounts (v17: owner, market, portfolio only)", () => {
+    // v17 BREAKING: clock, userAta, vault, tokenProgram removed — InitPortfolio does not transfer collateral.
+    expect(ACCOUNTS_INIT_USER).toHaveLength(3);
   });
 
   it("ACCOUNTS_INIT_LP has 6 accounts (S-NEW-A: clock added at index 5)", () => {
@@ -124,8 +125,9 @@ describe("Account orderings", () => {
     expect(ACCOUNTS_DEPOSIT_COLLATERAL).toHaveLength(6);
   });
 
-  it("ACCOUNTS_WITHDRAW_COLLATERAL has 8 accounts", () => {
-    expect(ACCOUNTS_WITHDRAW_COLLATERAL).toHaveLength(8);
+  it("ACCOUNTS_WITHDRAW_COLLATERAL has 7 accounts (v17: clock removed, portfolio added)", () => {
+    // v17 BREAKING: clock sysvar removed; portfolio PDA added at [2]; oracleIdx removed.
+    expect(ACCOUNTS_WITHDRAW_COLLATERAL).toHaveLength(7);
   });
 
   it("ACCOUNTS_KEEPER_CRANK has 4 accounts", () => {
@@ -140,16 +142,22 @@ describe("Account orderings", () => {
     expect(ACCOUNTS_LIQUIDATE_AT_ORACLE).toHaveLength(4);
   });
 
-  it("ACCOUNTS_CLOSE_ACCOUNT has 8 accounts", () => {
-    expect(ACCOUNTS_CLOSE_ACCOUNT).toHaveLength(8);
+  it("ACCOUNTS_CLOSE_ACCOUNT has 3 accounts (v17: owner, market, portfolio only)", () => {
+    // v17 BREAKING: vault, userAta, vaultPda, tokenProgram, clock, oracle removed.
+    // ClosePortfolio does not transfer collateral in v17 — just deregisters portfolio.
+    expect(ACCOUNTS_CLOSE_ACCOUNT).toHaveLength(3);
   });
 
-  it("ACCOUNTS_TOPUP_INSURANCE has 6 accounts (v12.19 wrapper at src/percolator.rs:9256)", () => {
-    expect(ACCOUNTS_TOPUP_INSURANCE).toHaveLength(6);
+  it("ACCOUNTS_TOPUP_INSURANCE has 5 accounts (v17: clock removed, signer+market+sourceToken+vaultToken+tokenProgram)", () => {
+    // v17 BREAKING: clock sysvar removed. Fixed 5 accounts: signer, market, sourceToken, vaultToken, tokenProgram.
+    // Optional 6th ledger account may be appended by caller but is not in the base spec.
+    expect(ACCOUNTS_TOPUP_INSURANCE).toHaveLength(5);
   });
 
-  it("ACCOUNTS_TRADE_CPI has 8 accounts (v12.17: lpPda added)", () => {
-    expect(ACCOUNTS_TRADE_CPI).toHaveLength(8);
+  it("ACCOUNTS_TRADE_CPI has 7 accounts (v17: lpOwner/clock/oracle/lpPda removed, matcherDelegate added)", () => {
+    // v17 BREAKING: lpOwner, clock, oracle, lpPda removed. matcherDelegate replaces lpPda.
+    // signerA(+signer), market, accountA, accountB, matcherProg, matcherCtx, matcherDelegate.
+    expect(ACCOUNTS_TRADE_CPI).toHaveLength(7);
   });
 
   it("ACCOUNTS_SET_RISK_THRESHOLD has 2 accounts", () => {
@@ -185,23 +193,26 @@ describe("Signer / writable invariants", () => {
     expect(ACCOUNTS_INIT_MARKET[0].writable).toBe(true);
   });
 
-  it("InitUser user[0] is signer+writable", () => {
-    expect(ACCOUNTS_INIT_USER[0].name).toBe("user");
+  it("InitUser owner[0] is signer+writable (v17: account[0] renamed from 'user' to 'owner')", () => {
+    // v17 BREAKING: account[0] is now "owner" (the portfolio owner). "user" was the v12 name.
+    expect(ACCOUNTS_INIT_USER[0].name).toBe("owner");
     expect(ACCOUNTS_INIT_USER[0].signer).toBe(true);
     expect(ACCOUNTS_INIT_USER[0].writable).toBe(true);
   });
 
-  it("TradeNoCpi has two signers (user and lp)", () => {
+  it("TradeNoCpi has two signers (signerA and signerB, v17 rename from user/lp)", () => {
+    // v17 BREAKING: renamed user→signerA, lp→signerB. Both must sign (party A and B).
     const signers = ACCOUNTS_TRADE_NOCPI.filter((a) => a.signer);
     expect(signers).toHaveLength(2);
-    expect(signers[0].name).toBe("user");
-    expect(signers[1].name).toBe("lp");
+    expect(signers[0].name).toBe("signerA");
+    expect(signers[1].name).toBe("signerB");
   });
 
-  it("TradeCpi has only user as signer (lpOwner is not signer)", () => {
+  it("TradeCpi has only signerA as signer (v17 rename from user; lpOwner not in v17)", () => {
+    // v17 BREAKING: renamed user→signerA. lpOwner removed (matcher program authenticates B side).
     const signers = ACCOUNTS_TRADE_CPI.filter((a) => a.signer);
     expect(signers).toHaveLength(1);
-    expect(signers[0].name).toBe("user");
+    expect(signers[0].name).toBe("signerA");
   });
 
   it("LiquidateAtOracle account[0] is not signer and not writable (unused)", () => {
@@ -210,7 +221,9 @@ describe("Signer / writable invariants", () => {
     expect(ACCOUNTS_LIQUIDATE_AT_ORACLE[0].writable).toBe(false);
   });
 
-  it("slab is writable in all trading/state-changing instructions", () => {
+  it("market-group slab (named 'slab' or 'market') is writable in all trading/state-changing instructions", () => {
+    // v17 BREAKING: many specs renamed the market-group slab account from "slab" to "market".
+    // The writable invariant still holds regardless of name.
     const stateChanging = [
       ACCOUNTS_INIT_MARKET,
       ACCOUNTS_INIT_USER,
@@ -228,9 +241,10 @@ describe("Signer / writable invariants", () => {
       ACCOUNTS_UNPAUSE_MARKET,
     ];
     for (const spec of stateChanging) {
-      const slab = spec.find((a) => a.name === "slab");
-      expect(slab, `slab missing in spec`).toBeDefined();
-      expect(slab!.writable).toBe(true);
+      // Find the market-group slab account: named "slab" (v12) or "market" (v17 rename)
+      const marketSlab = spec.find((a) => a.name === "slab" || a.name === "market");
+      expect(marketSlab, `market/slab account missing in spec`).toBeDefined();
+      expect(marketSlab!.writable).toBe(true);
     }
   });
 
@@ -536,9 +550,12 @@ describe("Pre-audit account count fixes", () => {
     expect(ACCOUNTS_ADMIN_FORCE_CLOSE).toHaveLength(8);
     expect(ACCOUNTS_RESOLVE_PERMISSIONLESS).toHaveLength(3);
     expect(ACCOUNTS_FORCE_CLOSE_RESOLVED).toHaveLength(7);
-    expect(ACCOUNTS_CREATE_LP_VAULT).toHaveLength(8);
-    expect(ACCOUNTS_LP_VAULT_DEPOSIT).toHaveLength(9);
-    expect(ACCOUNTS_LP_VAULT_CRANK_FEES).toHaveLength(2);
+    // v17 BREAKING: CreateLpVault 8→6 (admin+market+registry+lpMint+systemProgram+tokenProgram)
+    expect(ACCOUNTS_CREATE_LP_VAULT).toHaveLength(6);
+    // v17 BREAKING: LpVaultDeposit 9→10 (ledger PDA added at [7]; systemProgram added at [9])
+    expect(ACCOUNTS_LP_VAULT_DEPOSIT).toHaveLength(10);
+    // v17 BREAKING: LpVaultCrankFees 2→4 (cranker+market+registry+ledger)
+    expect(ACCOUNTS_LP_VAULT_CRANK_FEES).toHaveLength(4);
     expect(ACCOUNTS_CHALLENGE_SETTLEMENT).toHaveLength(7);
     expect(ACCOUNTS_RESOLVE_DISPUTE).toHaveLength(7);
     expect(ACCOUNTS_DEPOSIT_LP_COLLATERAL).toHaveLength(7);

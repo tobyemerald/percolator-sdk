@@ -140,16 +140,18 @@ describe("Rust parity fixtures", () => {
     };
 
     expect(STAKE_POOL_SIZE).toBe(fixture.stake_pool_size);
-    expect(fixture.layout.reserved_start).toBe(288);
-    expect(fixture.layout.offsets.market_resolved).toBe(297);
-    expect(fixture.layout.offsets.hwm_enabled).toBe(298);
-    expect(fixture.layout.offsets.hwm_floor_bps).toBe(299);
-    expect(fixture.layout.offsets.epoch_high_water_tvl).toBe(304);
-    expect(fixture.layout.offsets.hwm_last_epoch).toBe(312);
-    expect(fixture.layout.offsets.tranche_enabled).toBe(320);
-    expect(fixture.layout.offsets.junior_balance).toBe(321);
-    expect(fixture.layout.offsets.junior_total_lp).toBe(329);
-    expect(fixture.layout.offsets.junior_fee_mult_bps).toBe(337);
+    // v2 StakePool: pending_admin [u8;32] added at offset 288; _reserved shifts to 320.
+    // All absolute offsets += 32 vs v1 (reserved_start was 288 in v1, now 320 in v2).
+    expect(fixture.layout.reserved_start).toBe(320);
+    expect(fixture.layout.offsets.market_resolved).toBe(329);  // 320 + 9
+    expect(fixture.layout.offsets.hwm_enabled).toBe(330);      // 320 + 10
+    expect(fixture.layout.offsets.hwm_floor_bps).toBe(331);    // 320 + 11
+    expect(fixture.layout.offsets.epoch_high_water_tvl).toBe(336); // 320 + 16
+    expect(fixture.layout.offsets.hwm_last_epoch).toBe(344);   // 320 + 24
+    expect(fixture.layout.offsets.tranche_enabled).toBe(352);  // 320 + 32
+    expect(fixture.layout.offsets.junior_balance).toBe(353);   // 320 + 33
+    expect(fixture.layout.offsets.junior_total_lp).toBe(361);  // 320 + 41
+    expect(fixture.layout.offsets.junior_fee_mult_bps).toBe(369); // 320 + 49
 
     for (const entry of fixture.live_tags) {
       expect(sdkTags[entry.name]).toBe(entry.tag);

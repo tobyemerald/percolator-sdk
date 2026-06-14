@@ -30,7 +30,10 @@ export interface RetryConfig {
      */
     maxDelayMs?: number;
     /**
-     * Jitter factor (0–1). Applied as random `[0, jitterFactor * delay]` addition.
+     * Jitter factor (0–1). When non-zero, equal-jitter is applied: the computed
+     * delay `raw` is split at its midpoint and a random value `[half, raw]` is
+     * returned, bounding variance to 50 % of the backoff. Set to `0` to disable
+     * jitter entirely (deterministic backoff).
      * @default 0.25
      */
     jitterFactor?: number;
@@ -135,6 +138,14 @@ export interface RpcPoolConfig {
      * @default true
      */
     verbose?: boolean;
+    /**
+     * Time in ms after which a continuously unhealthy endpoint is automatically
+     * restored to healthy so it can be retried. Set to 0 to disable time-based
+     * recovery (the pool will still recover via `maybeRecoverEndpoints` when all
+     * endpoints are exhausted).
+     * @default 60_000
+     */
+    recoveryAfterMs?: number;
 }
 /**
  * Result of an RPC health probe.
@@ -230,6 +241,8 @@ export declare class RpcPool {
     private readonly retryConfig;
     private readonly requestTimeoutMs;
     private readonly verbose;
+    /** Time-based recovery window in ms (0 = disabled). */
+    private readonly recoveryAfterMs;
     /** Round-robin index tracker. */
     private rrIndex;
     /** Consecutive failure threshold before marking an endpoint unhealthy. */
