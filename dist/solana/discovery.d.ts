@@ -1,5 +1,5 @@
 import { Connection, PublicKey } from "@solana/web3.js";
-import { type SlabHeader, type MarketConfig, type EngineState, type RiskParams } from "./slab.js";
+import { type SlabHeader, type MarketConfig, type EngineState, type RiskParams, type WrapperConfigV17 } from "./slab.js";
 import { type StaticMarketEntry } from "./static-markets.js";
 import { type Network } from "../config/program-ids.js";
 /**
@@ -9,10 +9,39 @@ export interface DiscoveredMarket {
     slabAddress: PublicKey;
     /** The program that owns this slab account */
     programId: PublicKey;
+    /**
+     * v12.x slab header. Present when the market is a v12 slab account (PERCOLAT magic).
+     * Absent (undefined) for v17 market group accounts (PERCV16\0 magic) — use configV17 instead.
+     */
     header: SlabHeader;
+    /**
+     * v12.x market config parsed from the slab CONFIG region (536 bytes at offset 104).
+     * Present for v12 slab accounts. Absent for v17 accounts — use configV17 instead.
+     */
     config: MarketConfig;
+    /**
+     * v12.x engine state (bitmap, account counts).
+     * Present for v12 slab accounts. Absent for v17 accounts.
+     */
     engine: EngineState;
+    /**
+     * v12.x risk parameters.
+     * Present for v12 slab accounts. Absent for v17 accounts.
+     */
     params: RiskParams;
+    /**
+     * v17 wrapper config (WrapperConfigV16 struct, 432 bytes at header offset 16).
+     * Present when the market is a v17 market group account (PERCV16\0 magic).
+     * Absent for v12 slab accounts.
+     *
+     * Use `isV17Market(m)` to narrow the type:
+     * ```ts
+     * if (m.configV17) {
+     *   console.log(m.configV17.collateralMint.toBase58());
+     * }
+     * ```
+     */
+    configV17?: WrapperConfigV17;
 }
 /**
  * Slab tier definitions — V1 layout (all tiers upgraded as of 2026-03-13).

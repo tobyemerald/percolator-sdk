@@ -491,6 +491,28 @@ export declare const V17_HEADER_LEN = 16;
 /** v17 market group config offset = HEADER_LEN + WRAPPER_CONFIG_LEN = 448. */
 export declare const V17_MARKET_GROUP_OFF: number;
 /**
+ * v17 MarketGroupV16HeaderAccount size (758 bytes) and per-asset slot stride (1797 bytes),
+ * verified against percolator-prog `cargo run --example dump_layout`.
+ */
+export declare const V17_MARKET_GROUP_LEN = 758;
+export declare const V17_MARKET_ASSET_SLOT_LEN = 1797;
+/**
+ * Exact byte length of a v17 market (slab) account for a given asset-slot capacity, matching the
+ * program's state::market_account_len_for_capacity. v17 markets are DYNAMICALLY sized — the wrapper's
+ * InitMarket validates that (len - V17_MARKET_GROUP_OFF - V17_MARKET_GROUP_LEN) is an exact multiple of
+ * V17_MARKET_ASSET_SLOT_LEN, so a v12 SLAB_TIERS byte count (e.g. 992_568) makes InitMarket REVERT.
+ * Size the account with this for maxPortfolioAssets (cap-1 = 3003, cap-14 = 26_364).
+ */
+export declare function v17MarketAccountLen(maxPortfolioAssets: number): number;
+/**
+ * v17 portfolio account total length = HEADER_LEN(16) + PortfolioAccountV16Account(9227) +
+ * PORTFOLIO_MATCHER_CONFIG_LEN(104) = 9347. Single source of truth for the System.createAccount
+ * size/rent: the program's InitPortfolio reallocs UP to this and adds no lamports, so an undersized
+ * createAccount (e.g. 2048) leaves the account below rent-exempt → InitPortfolio fails with
+ * InsufficientFundsForRent. (Matches the keeper's getProgramAccounts dataSize filter.)
+ */
+export declare const V17_PORTFOLIO_ACCOUNT_LEN = 9347;
+/**
  * Parsed WrapperConfigV16 — the 432-byte v17 market config block.
  *
  * Field offsets follow SBF alignment (u128 align=8, not 16).

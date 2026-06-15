@@ -222,7 +222,7 @@ var IX_TAG = {
   /**
    * RestartAssetOracle (tag 69) — permissionless oracle restart after stale/stuck state.
    *
-   * Wire: tag(1) + asset_index(u16) + now_slot(u64) + initial_price(u64) = 20 bytes.
+   * Wire: tag(1) + asset_index(u16) + now_slot(u64) + initial_price(u64) = 19 bytes.
    */
   RestartAssetOracle: 69,
   // ── Fork NFT / B-3 (tags 72/73) — kept from v16 ─────────────────────────
@@ -242,7 +242,7 @@ var IX_TAG = {
   /**
    * CreateLpVault (tag 74).
    * Wire: tag(1) + fee_share_bps(u16) + redemption_cooldown_slots(u64) +
-   *       oi_reservation_threshold_bps(u16) + domain(u16) = 14 bytes.
+   *       oi_reservation_threshold_bps(u16) + domain(u16) = 15 bytes.
    */
   CreateLpVault: 74,
   /**
@@ -542,13 +542,8 @@ function encodeInitMarket(args) {
 function encodeInitUser(_args) {
   return new Uint8Array([IX_TAG.InitPortfolio]);
 }
-function encodeInitLP(args) {
-  return concatBytes(
-    encU8(IX_TAG.InitLP),
-    encPubkey(args.matcherProgram),
-    encPubkey(args.matcherContext),
-    encU64(args.feePayment)
-  );
+function encodeInitLP(_args) {
+  return removedInstruction("InitLP", IX_TAG.InitLP, "CreateLpVault (tag 74)");
 }
 function encodeDepositCollateral(args) {
   return concatBytes(
@@ -599,10 +594,11 @@ function encodeTradeNoCpi(args) {
   }
   return data;
 }
-function encodeLiquidateAtOracle(args) {
-  return concatBytes(
-    encU8(IX_TAG.LiquidateAtOracle),
-    encU16(args.targetIdx)
+function encodeLiquidateAtOracle(_args) {
+  return removedInstruction(
+    "LiquidateAtOracle",
+    IX_TAG.LiquidateAtOracle,
+    "PermissionlessCrank (tag 5)"
   );
 }
 function encodeCloseAccount(_args) {
@@ -635,8 +631,12 @@ function encodeUnresolveMarket(_args) {
 function encodeSetRiskThreshold(_args) {
   return removedInstruction("SetRiskThreshold", IX_TAG.SetRiskThreshold, "encodeInitMarket()");
 }
-function encodeUpdateAdmin(args) {
-  return concatBytes(encU8(IX_TAG.UpdateAdmin), encPubkey(args.newAdmin));
+function encodeUpdateAdmin(_args) {
+  return removedInstruction(
+    "UpdateAdmin",
+    IX_TAG.UpdateAdmin,
+    "UpdateAuthority (tag 32) or UpdateAssetAuthority (tag 65)"
+  );
 }
 function encodeCloseSlab() {
   return encU8(IX_TAG.CloseSlab);
@@ -726,7 +726,11 @@ function computeEmaMarkPrice(markPrevE6, oracleE6, dtSlots, alphaE6 = MARK_PRICE
   return (oracleClamped * effectiveAlpha + markPrevE6 * oneMinusAlpha) / 1000000n;
 }
 function encodeUpdateHyperpMark() {
-  return new Uint8Array([34]);
+  return removedInstruction(
+    "UpdateHyperpMark (v12 DEX-pool mark crank \u2014 tag 34 is ConfigureHybridOracle in v17)",
+    34,
+    "ConfigureHybridOracle (tag 34) / ConfigureEwmaMark (tag 35), or PermissionlessCrank (tag 5) for mark refresh"
+  );
 }
 function encodeFundMarketInsurance(_args) {
   return removedInstruction("FundMarketInsurance (v12 tag 25 \u2014 not in v17)", IX_TAG.FundMarketInsurance, void 0);
@@ -1141,6 +1145,70 @@ function encodeSetNftProgramId(args) {
     encU8(IX_TAG.SetNftProgramId),
     encPubkey(args.nftProgramId)
   );
+}
+function encodeConfigureHybridOracle(args) {
+  return concatBytes(
+    encU8(IX_TAG.ConfigureHybridOracle),
+    encU16(args.assetIndex),
+    encU64(args.nowSlot),
+    encI64(args.nowUnixTs),
+    encU8(args.oracleLegCount),
+    encU8(args.oracleLegFlags),
+    encU64(args.maxStalenessSecs),
+    encU64(args.hybridSoftStaleSlots),
+    encU64(args.markEwmaHalflifeSlots),
+    encU64(args.markMinFee),
+    encU8(args.invert),
+    encU32(args.unitScale),
+    encU16(args.confFilterBps),
+    encPubkey(args.oracleLegFeeds[0]),
+    encPubkey(args.oracleLegFeeds[1]),
+    encPubkey(args.oracleLegFeeds[2])
+  );
+}
+function encodeConfigureEwmaMark(args) {
+  return concatBytes(
+    encU8(IX_TAG.ConfigureEwmaMark),
+    encU16(args.assetIndex),
+    encU64(args.nowSlot),
+    encU64(args.initialMarkE6),
+    encU64(args.markEwmaHalflifeSlots),
+    encU64(args.markMinFee)
+  );
+}
+function encodePushEwmaMark(args) {
+  return concatBytes(
+    encU8(IX_TAG.PushEwmaMark),
+    encU16(args.assetIndex),
+    encU64(args.nowSlot),
+    encU64(args.markE6)
+  );
+}
+function encodeConfigureAuthMark(args) {
+  return concatBytes(
+    encU8(IX_TAG.ConfigureAuthMark),
+    encU16(args.assetIndex),
+    encU64(args.nowSlot),
+    encU64(args.initialMarkE6)
+  );
+}
+function encodePushAuthMark(args) {
+  return concatBytes(
+    encU8(IX_TAG.PushAuthMark),
+    encU16(args.assetIndex),
+    encU64(args.nowSlot),
+    encU64(args.markE6)
+  );
+}
+function encodeMatcherInitPassive(args) {
+  const buf = new Uint8Array(66);
+  buf[0] = 2;
+  buf[1] = 0;
+  const u32Bytes = encU32(100);
+  buf.set(u32Bytes, 10);
+  const u128Bytes = encU128(args.maxFillAbs);
+  buf.set(u128Bytes, 34);
+  return buf;
 }
 
 // src/abi/accounts.ts
@@ -1666,6 +1734,36 @@ var ACCOUNTS_INIT_MATCHER_CTX = [
   { name: "matcherCtx", signer: false, writable: true },
   { name: "matcherProg", signer: false, writable: false },
   { name: "lpPda", signer: false, writable: false }
+];
+var ACCOUNTS_CONFIGURE_HYBRID_ORACLE = [
+  { name: "oracleAuthority", signer: true, writable: false },
+  { name: "market", signer: false, writable: true }
+  // [2..] oracle feed accounts appended by caller per oracle_leg_count
+];
+var ACCOUNTS_CONFIGURE_EWMA_MARK = [
+  { name: "oracleAuthority", signer: true, writable: false },
+  { name: "market", signer: false, writable: true }
+];
+var ACCOUNTS_PUSH_EWMA_MARK = [
+  { name: "oracleAuthority", signer: true, writable: false },
+  { name: "market", signer: false, writable: true }
+];
+var ACCOUNTS_CONFIGURE_AUTH_MARK = [
+  { name: "oracleAuthority", signer: true, writable: false },
+  { name: "market", signer: false, writable: true }
+];
+var ACCOUNTS_PUSH_AUTH_MARK = [
+  { name: "oracleAuthority", signer: true, writable: false },
+  { name: "market", signer: false, writable: true }
+];
+var ACCOUNTS_SET_MATCHER_CONFIG = [
+  { name: "lpOwner", signer: true, writable: false },
+  { name: "market", signer: false, writable: false },
+  { name: "lpPortfolio", signer: false, writable: true },
+  // When enabled=1, also pass:
+  { name: "matcherProg", signer: false, writable: false },
+  { name: "matcherCtx", signer: false, writable: false },
+  { name: "matcherDelegate", signer: false, writable: false }
 ];
 var WELL_KNOWN = {
   tokenProgram: TOKEN_PROGRAM_ID,
@@ -4474,6 +4572,15 @@ var V17_WRAPPER_CONFIG_LEN = 432;
 var V17_ASSET_ORACLE_PROFILE_LEN = 400;
 var V17_HEADER_LEN = 16;
 var V17_MARKET_GROUP_OFF = V17_HEADER_LEN + V17_WRAPPER_CONFIG_LEN;
+var V17_MARKET_GROUP_LEN = 758;
+var V17_MARKET_ASSET_SLOT_LEN = 1797;
+function v17MarketAccountLen(maxPortfolioAssets) {
+  if (!Number.isInteger(maxPortfolioAssets) || maxPortfolioAssets < 1) {
+    throw new Error(`v17MarketAccountLen: maxPortfolioAssets must be a positive integer, got ${maxPortfolioAssets}`);
+  }
+  return V17_MARKET_GROUP_OFF + V17_MARKET_GROUP_LEN + maxPortfolioAssets * V17_MARKET_ASSET_SLOT_LEN;
+}
+var V17_PORTFOLIO_ACCOUNT_LEN = 9347;
 function parseWrapperConfigV17(data, configOff = V17_HEADER_LEN) {
   const MIN_LEN = configOff + V17_WRAPPER_CONFIG_LEN;
   if (data.length < MIN_LEN) {
@@ -4514,7 +4621,7 @@ function parseWrapperConfigV17(data, configOff = V17_HEADER_LEN) {
   const markEwmaHalflifeSlots = readU64LE(data, b + 248);
   const markMinFee = readU64LE(data, b + 256);
   const oracleTargetPriceE6 = readU64LE(data, b + 264);
-  const oracleTargetPublishTime = readU64LE(data, b + 272);
+  const oracleTargetPublishTime = readI64LE(data, b + 272);
   const ORACLE_LEG_CAP = 3;
   const oracleLegFeeds = [];
   for (let i = 0; i < ORACLE_LEG_CAP; i++) {
@@ -5015,6 +5122,7 @@ function clearStaticMarkets(network) {
 // src/solana/discovery.ts
 var ENGINE_BITMAP_OFF_V0 = 320;
 var MAGIC_BYTES = new Uint8Array([84, 65, 76, 79, 67, 82, 69, 80]);
+var V17_MAGIC_BYTES = new Uint8Array([0, 54, 49, 86, 67, 82, 69, 80]);
 var SLAB_TIERS = {
   small: SLAB_TIERS_V12_17["small"],
   medium: SLAB_TIERS_V12_17["medium"],
@@ -5389,6 +5497,24 @@ async function discoverMarkets(connection, programId, options = {}) {
         }
       }
     }
+    try {
+      const v17Results = await connection.getProgramAccounts(programId, {
+        filters: [
+          {
+            memcmp: {
+              offset: 0,
+              bytes: Buffer.from(V17_MAGIC_BYTES).toString("base64"),
+              encoding: "base64"
+            }
+          }
+        ],
+        dataSlice: { offset: 0, length: HEADER_SLICE_LENGTH }
+      });
+      for (const e of v17Results) {
+        rawAccounts.push({ ...e, maxAccounts: 0, dataSize: e.account.data.length });
+      }
+    } catch {
+    }
     if (rawAccounts.length === 0) {
       console.warn("[discoverMarkets] dataSize filters returned 0 markets, falling back to memcmp");
       const fallback = await connection.getProgramAccounts(programId, {
@@ -5493,6 +5619,26 @@ async function discoverMarkets(connection, programId, options = {}) {
     if (seenPubkeys.has(pkStr)) continue;
     seenPubkeys.add(pkStr);
     const data = new Uint8Array(account.data);
+    if (isV17Account(data)) {
+      try {
+        const configV17 = parseWrapperConfigV17(data);
+        markets.push({
+          slabAddress: pubkey,
+          programId,
+          header: {},
+          config: {},
+          engine: {},
+          params: {},
+          configV17
+        });
+      } catch (err) {
+        console.warn(
+          `[discoverMarkets] Failed to parse v17 account ${pkStr}:`,
+          err instanceof Error ? err.message : err
+        );
+      }
+      continue;
+    }
     let valid = true;
     for (let i = 0; i < MAGIC_BYTES.length; i++) {
       if (data[i] !== MAGIC_BYTES[i]) {
@@ -5555,6 +5701,26 @@ async function getMarketsByAddress(connection, programId, addresses, options = {
     if (!entry) continue;
     const { pubkey, data: rawData } = entry;
     const data = new Uint8Array(rawData);
+    if (isV17Account(data)) {
+      try {
+        const configV17 = parseWrapperConfigV17(data);
+        markets.push({
+          slabAddress: pubkey,
+          programId,
+          header: {},
+          config: {},
+          engine: {},
+          params: {},
+          configV17
+        });
+      } catch (err) {
+        console.warn(
+          `[getMarketsByAddress] Failed to parse v17 account ${pubkey.toBase58()}:`,
+          err instanceof Error ? err.message : err
+        );
+      }
+      continue;
+    }
     let valid = true;
     for (let i = 0; i < MAGIC_BYTES.length; i++) {
       if (data[i] !== MAGIC_BYTES[i]) {
@@ -7668,6 +7834,9 @@ export {
   ACCOUNTS_CLOSE_ORPHAN_SLAB,
   ACCOUNTS_CLOSE_SLAB,
   ACCOUNTS_CLOSE_STALE_SLABS,
+  ACCOUNTS_CONFIGURE_AUTH_MARK,
+  ACCOUNTS_CONFIGURE_EWMA_MARK,
+  ACCOUNTS_CONFIGURE_HYBRID_ORACLE,
   ACCOUNTS_CONVERT_RELEASED_PNL,
   ACCOUNTS_CREATE_INSURANCE_MINT,
   ACCOUNTS_CREATE_LP_VAULT,
@@ -7693,6 +7862,8 @@ export {
   ACCOUNTS_NFT_MINT,
   ACCOUNTS_PAUSE_MARKET,
   ACCOUNTS_PERMISSIONLESS_CRANK_BASE,
+  ACCOUNTS_PUSH_AUTH_MARK,
+  ACCOUNTS_PUSH_EWMA_MARK,
   ACCOUNTS_QUEUE_WITHDRAWAL,
   ACCOUNTS_RECLAIM_EMPTY_ACCOUNT,
   ACCOUNTS_RECLAIM_SLAB_RENT,
@@ -7708,6 +7879,7 @@ export {
   ACCOUNTS_SET_INSURANCE_WITHDRAW_POLICY,
   ACCOUNTS_SET_LP_COLLATERAL_PARAMS,
   ACCOUNTS_SET_MAINTENANCE_FEE,
+  ACCOUNTS_SET_MATCHER_CONFIG,
   ACCOUNTS_SET_MAX_PNL_CAP,
   ACCOUNTS_SET_OFFSET_PAIR,
   ACCOUNTS_SET_OI_CAP_MULTIPLIER,
@@ -7813,7 +7985,10 @@ export {
   V17_EXPECTED_VERSION,
   V17_HEADER_LEN,
   V17_MAGIC,
+  V17_MARKET_ASSET_SLOT_LEN,
+  V17_MARKET_GROUP_LEN,
   V17_MARKET_GROUP_OFF,
+  V17_PORTFOLIO_ACCOUNT_LEN,
   V17_SLAB_MAGIC,
   V17_WRAPPER_CONFIG_LEN,
   VAMM_MAGIC,
@@ -7907,6 +8082,9 @@ export {
   encodeCloseOrphanSlab,
   encodeCloseSlab,
   encodeCloseStaleSlabs,
+  encodeConfigureAuthMark,
+  encodeConfigureEwmaMark,
+  encodeConfigureHybridOracle,
   encodeConvertReleasedPnl,
   encodeCreateInsuranceMint,
   encodeCreateLpVault,
@@ -7931,6 +8109,7 @@ export {
   encodeLpVaultCrankFees,
   encodeLpVaultDeposit,
   encodeLpVaultWithdraw,
+  encodeMatcherInitPassive,
   encodeMintPositionNft,
   encodeNftBurn,
   encodeNftEmergencyBurn,
@@ -7938,6 +8117,8 @@ export {
   encodeNftSettleFunding,
   encodePauseMarket,
   encodePermissionlessCrank,
+  encodePushAuthMark,
+  encodePushEwmaMark,
   encodeQueueWithdrawal,
   encodeQueueWithdrawalSV,
   encodeReclaimEmptyAccount,
@@ -8069,6 +8250,7 @@ export {
   slabDataSizeV1,
   stripLighthouseFromTransaction,
   stripLighthouseInstructions,
+  v17MarketAccountLen,
   validateAmount,
   validateBps,
   validateI128,
